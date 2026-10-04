@@ -1,0 +1,12 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Build output
+dist
+test-results
+playwright-report
+
+# Keep the CastVideos-chrome sender close to upstream, so its changes are easy to follow.
+demo/sender

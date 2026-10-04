@@ -1,0 +1,59 @@
+{
+	"name": "@mattiasbuelens/chromecast-emulator",
+	"version": "0.1.0",
+	"description": "Run unmodified Chromecast sender and receiver apps in your browser, without a Chromecast device.",
+	"keywords": [
+		"chromecast",
+		"google-cast",
+		"cast",
+		"emulator",
+		"presentation-api",
+		"polyfill"
+	],
+	"homepage": "https://github.com/MattiasBuelens/chromecast-emulator/tree/main/emulator#readme",
+	"bugs": {
+		"url": "https://github.com/MattiasBuelens/chromecast-emulator/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/MattiasBuelens/chromecast-emulator.git",
+		"directory": "emulator"
+	},
+	"license": "MIT",
+	"type": "module",
+	"exports": {
+		"./presentation-polyfill": {
+			"production": "./dist/presentation-polyfill.min.js",
+			"default": "./dist/presentation-polyfill.js"
+		},
+		"./presentation-polyfill.js": "./dist/presentation-polyfill.js",
+		"./presentation-polyfill.min.js": "./dist/presentation-polyfill.min.js",
+		"./cast-sender-emulator": {
+			"production": "./dist/cast-sender-emulator.min.js",
+			"default": "./dist/cast-sender-emulator.js"
+		},
+		"./cast-sender-emulator.js": "./dist/cast-sender-emulator.js",
+		"./cast-sender-emulator.min.js": "./dist/cast-sender-emulator.min.js",
+		"./cast-receiver-emulator": {
+			"production": "./dist/cast-receiver-emulator.min.js",
+			"default": "./dist/cast-receiver-emulator.js"
+		},
+		"./cast-receiver-emulator.js": "./dist/cast-receiver-emulator.js",
+		"./cast-receiver-emulator.min.js": "./dist/cast-receiver-emulator.min.js",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist"
+	],
+	"sideEffects": true,
+	"scripts": {
+		"build": "node build.js",
+		"prepack": "node build.js"
+	},
+	"devDependencies": {
+		"esbuild": "^0.25.0"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

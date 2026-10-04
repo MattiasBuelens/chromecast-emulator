@@ -1,0 +1,15 @@
+{
+	"name": "chromecast-emulator-workspace",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "pnpm run -r build",
+		"dev": "pnpm --filter chromecast-emulator-demo dev",
+		"test:e2e": "pnpm --filter chromecast-emulator-demo test:e2e",
+		"format": "prettier --write ."
+	},
+	"devDependencies": {
+		"prettier": "^3.6.2"
+	},
+	"packageManager": "pnpm@10.28.0"
+}

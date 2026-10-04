@@ -1,0 +1,6 @@
+packages:
+  - emulator
+  - demo
+
+onlyBuiltDependencies:
+  - esbuild
