@@ -103,14 +103,14 @@ the receiver SDK talks to the Cast platform over a WebSocket to `ws://localhost:
 
 The emulator replaces both ends:
 
-- [`presentation-polyfill.js`](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/emulator/src/presentation-polyfill.js) (sender and receiver): a
+- [`presentation-polyfill.js`](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/emulator/src/presentation-polyfill.ts) (sender and receiver): a
   Presentation API implementation that presents a URL by opening it in a popup window, and
   exchanges messages with it through `postMessage()`. The receiver window gets the incoming
   connections through `navigator.presentation.receiver`.
-- [`cast-sender-emulator.js`](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/emulator/src/cast-sender-emulator.js) (sender): maps `cast:<appId>`
+- [`cast-sender-emulator.js`](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/emulator/src/cast-sender-emulator.ts) (sender): maps `cast:<appId>`
   presentation URLs to the receiver page, names presentations after their Cast session, and lets
   the SDK rejoin a session after a reload.
-- [`cast-receiver-emulator.js`](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/emulator/src/cast-receiver-emulator.js) (receiver): fakes the Cast
+- [`cast-receiver-emulator.js`](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/emulator/src/cast-receiver-emulator.ts) (receiver): fakes the Cast
   platform (`cast.__platform__` and the IPC WebSocket), and plays the part of Chrome's Media Router:
   it translates the sender SDK's messages to the IPC messages CAF expects, and back.
 
@@ -155,9 +155,9 @@ volume.
 
 ## Development
 
-The scripts in [`src`](https://github.com/MattiasBuelens/chromecast-emulator/tree/main/emulator/src) are ES modules. `pnpm build` bundles each one with
-[tsdown](https://tsdown.dev/) into a classic script in `dist/`, along with a minified version, and
-runs automatically before `npm publish`.
+The scripts in [`src`](https://github.com/MattiasBuelens/chromecast-emulator/tree/main/emulator/src) are written in TypeScript. `pnpm build` type-checks them, and
+bundles each one with [tsdown](https://tsdown.dev/) into a classic script in `dist/`, along with a
+minified version. It runs automatically before `npm publish`.
 
 ## Resources
 

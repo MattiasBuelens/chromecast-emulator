@@ -47,13 +47,15 @@
 	],
 	"sideEffects": true,
 	"scripts": {
-		"build": "tsdown",
-		"prepack": "tsdown"
+		"build": "tsc && tsdown",
+		"typecheck": "tsc",
+		"prepack": "pnpm run build"
 	},
 	"publishConfig": {
 		"access": "public"
 	},
 	"devDependencies": {
-		"tsdown": "^0.23.0"
+		"tsdown": "^0.23.0",
+		"typescript": "^7.0.2"
 	}
 }

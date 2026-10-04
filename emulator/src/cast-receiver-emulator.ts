@@ -23,6 +23,75 @@
  * For debugging, `castReceiverEmulator.trace` holds the most recent IPC and sender messages, and
  * every message is also logged with console.debug() (shown with the "Verbose" log level).
  */
+import { parseCastUrl, SESSION_ID_PREFIX } from './shared/cast-url'
+import type { PresentationConnection } from './shared/presentation-api'
+import { defineEventHandlers, randomId } from './shared/utils'
+
+interface CastPlatform {
+	queryPlatformValue(key: string): unknown
+}
+
+declare global {
+	interface Window {
+		/** The Cast SDKs' namespace. */
+		cast?: { __platform__?: CastPlatform } & Record<string, unknown>
+		castReceiverEmulator?: { device: typeof device; trace: TraceEntry[] }
+	}
+}
+
+/** A sender app, connected through a Presentation API connection. */
+interface Client {
+	clientId: string
+	senderId: string
+	connection: PresentationConnection
+	announced: boolean
+	reconnect: boolean
+	userAgent: string
+}
+
+/** A message between the receiver SDK and the platform, over the IPC WebSocket. */
+interface IpcMessage {
+	namespace: string
+	senderId: string
+	data: string
+}
+
+/** A message between the sender SDK and Chrome's Media Router. */
+interface SenderMessage {
+	type: string
+	message: unknown
+	sequenceNumber?: number
+	timeoutMillis?: number
+	clientId?: string
+}
+
+/** A JSON object whose fields we have not checked yet. */
+type JsonObject = Record<string, unknown>
+
+/** A message to the receiver's media namespace, or to the platform, from a sender. */
+interface V2Message extends JsonObject {
+	type?: string
+	volume?: { level?: unknown; muted?: unknown }
+}
+
+interface MediaStatus extends JsonObject {
+	sessionId?: string
+	supportedMediaCommands?: number | string[]
+}
+
+interface Volume {
+	controlType: string
+	level: number
+	muted: boolean
+	stepInterval: number
+}
+
+interface TraceEntry {
+	time: number
+	direction: string
+	message: unknown
+}
+
 const LOG_PREFIX = '[cast-receiver-emulator]'
 const IPC_PORT = 8008
 
@@ -30,7 +99,6 @@ const SYSTEM_NAMESPACE = 'urn:x-cast:com.google.cast.system'
 const MEDIA_NAMESPACE = 'urn:x-cast:com.google.cast.media'
 const SYSTEM_SENDER_ID = 'SystemSender'
 const RESERVED_NAMESPACE_PREFIX = 'urn:x-cast:com.google.cast.'
-const SESSION_ID_PREFIX = 'cast-session_'
 
 const RECEIVER_FRIENDLY_NAME = 'Chromecast Emulator'
 const RECEIVER_LABEL = 'Q2hyb21lY2FzdEVtdWxhdG9y' // any stable base64url string will do
@@ -56,33 +124,28 @@ const MEDIA_REQUEST_TYPES = new Set([
 	'SEEK',
 	'STOP_MEDIA'
 ])
-const MEDIA_REQUEST_RENAMES = {
+const MEDIA_REQUEST_RENAMES: Partial<Record<string, string>> = {
 	STOP_MEDIA: 'STOP',
 	MEDIA_SET_VOLUME: 'SET_VOLUME',
 	MEDIA_GET_STATUS: 'GET_STATUS'
 }
 
-const log = (...args) => console.debug(LOG_PREFIX, ...args)
+const log = (...args: unknown[]) => console.debug(LOG_PREFIX, ...args)
 
 // The most recent messages in each direction, for debugging: castReceiverEmulator.trace
 const TRACE_LIMIT = 500
-const trace = []
-const traceMessage = (direction, message) => {
+const trace: TraceEntry[] = []
+const traceMessage = (direction: string, message: unknown) => {
 	trace.push({ time: Date.now(), direction, message })
 	if (trace.length > TRACE_LIMIT) trace.shift()
 	log(direction, message)
 }
 
-const randomId = () =>
-	typeof crypto !== 'undefined' && crypto.randomUUID
-		? crypto.randomUUID()
-		: Date.now().toString(36) + Math.random().toString(36).slice(2)
-
 // ----------- Fake Cast platform
 
-window.cast = window.cast || {}
-if (!window.cast.__platform__) {
-	window.cast.__platform__ = {
+const cast = (window.cast = window.cast || {})
+if (!cast.__platform__) {
+	cast.__platform__ = {
 		queryPlatformValue: (key) => {
 			switch (key) {
 				case 'port-for-web-server':
@@ -122,7 +185,7 @@ if (!window.cast.__platform__) {
 
 const NativeWebSocket = window.WebSocket
 
-const isIpcUrl = (url) => {
+const isIpcUrl = (url: string | URL) => {
 	try {
 		const { protocol, hostname, pathname } = new URL(url, location.href)
 		return (
@@ -137,7 +200,14 @@ const isIpcUrl = (url) => {
 
 /** Stands in for the receiver SDK's WebSocket to the Cast platform. */
 class CastIpcSocket extends EventTarget {
-	constructor(url) {
+	declare url: string
+	declare readyState: number
+	declare protocol: string
+	declare extensions: string
+	declare binaryType: BinaryType
+	declare bufferedAmount: number
+
+	constructor(url: string | URL) {
 		super()
 		// Own data properties, because the ones inherited from WebSocket.prototype are getter-only.
 		const fields = {
@@ -164,7 +234,7 @@ class CastIpcSocket extends EventTarget {
 		})
 	}
 
-	send(data) {
+	send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
 		if (this.readyState === NativeWebSocket.CONNECTING) {
 			throw new DOMException('WebSocket is still connecting', 'InvalidStateError')
 		}
@@ -172,7 +242,7 @@ class CastIpcSocket extends EventTarget {
 		if (typeof data === 'string') {
 			device.handleIpcMessage(data)
 		} else {
-			new Blob([data]).text().then((text) => device.handleIpcMessage(text))
+			new Blob([data as BlobPart]).text().then((text) => device.handleIpcMessage(text))
 		}
 	}
 
@@ -184,26 +254,13 @@ class CastIpcSocket extends EventTarget {
 	}
 
 	/** Deliver a message from the platform to the receiver SDK. */
-	_deliver(text) {
+	_deliver(text: string) {
 		if (this.readyState !== NativeWebSocket.OPEN) return
 		traceMessage('platform -> receiver', text)
 		this.dispatchEvent(new MessageEvent('message', { data: text }))
 	}
 }
-for (const name of ['open', 'message', 'close', 'error']) {
-	const key = Symbol(`on${name}`)
-	Object.defineProperty(CastIpcSocket.prototype, `on${name}`, {
-		configurable: true,
-		get() {
-			return this[key] || null
-		},
-		set(handler) {
-			if (this[key]) this.removeEventListener(name, this[key])
-			this[key] = typeof handler === 'function' ? handler : null
-			if (this[key]) this.addEventListener(name, this[key])
-		}
-	})
-}
+defineEventHandlers(CastIpcSocket.prototype, ['open', 'message', 'close', 'error'])
 // Keep `socket instanceof WebSocket` working.
 Object.setPrototypeOf(CastIpcSocket.prototype, NativeWebSocket.prototype)
 
@@ -217,46 +274,45 @@ window.WebSocket = new Proxy(NativeWebSocket, {
 // ----------- Emulated device: one Cast session, many sender clients
 
 const device = {
-	/** @type {CastIpcSocket | null} */
-	socket: null,
+	socket: null as CastIpcSocket | null,
 	/** Messages for the receiver SDK, held until its socket is open and the platform said "ready". */
-	pendingIpc: [],
+	pendingIpc: [] as string[],
 	platformReady: false,
 
 	sessionId: randomId(),
 	transportId: `web-${Math.floor(Math.random() * 1e6)}`,
-	appId: null,
-	launchingSenderId: null,
+	appId: null as string | null,
+	launchingSenderId: null as string | null,
 	appReady: false,
 	namespaces: [MEDIA_NAMESPACE],
 	statusText: '',
 	displayName: document.title || 'Cast Emulator Receiver',
-	volume: { controlType: 'attenuation', level: 1, muted: false, stepInterval: 0.05 },
-	lastMediaStatus: null,
+	volume: { controlType: 'attenuation', level: 1, muted: false, stepInterval: 0.05 } as Volume,
+	lastMediaStatus: null as MediaStatus[] | null,
 
-	/** @type {Map<string, {clientId: string, senderId: string, connection: PresentationConnection, announced: boolean, reconnect: boolean, userAgent: string}>} */
-	clients: new Map(),
+	/** The connected senders, by client ID. */
+	clients: new Map<string, Client>(),
 	/** Maps the request IDs we put on media commands back to the sender's sequence numbers. */
-	pendingRequests: new Map(),
+	pendingRequests: new Map<number, { clientId: string; sequenceNumber: number | undefined }>(),
 	nextRequestId: 1,
 
 	// ---- Receiver SDK side (IPC)
 
-	attachSocket(socket) {
+	attachSocket(socket: CastIpcSocket) {
 		this.socket = socket
 		this.maybeSendPlatformReady()
 	},
 
-	detachSocket(socket) {
+	detachSocket(socket: CastIpcSocket) {
 		if (this.socket === socket) this.socket = null
 	},
 
-	sendIpc(namespace, senderId, data) {
+	sendIpc(namespace: string, senderId: string, data: unknown) {
 		const text = JSON.stringify({
 			namespace,
 			senderId,
 			data: typeof data === 'string' ? data : JSON.stringify(data)
-		})
+		} satisfies IpcMessage)
 		if (this.socket && this.platformReady) {
 			this.socket._deliver(text)
 		} else {
@@ -305,9 +361,9 @@ const device = {
 	},
 
 	/** A message from the receiver SDK to the platform or to a sender. */
-	handleIpcMessage(text) {
+	handleIpcMessage(text: string) {
 		traceMessage('receiver -> platform', text)
-		let message
+		let message: IpcMessage
 		try {
 			message = JSON.parse(text)
 		} catch {
@@ -315,7 +371,7 @@ const device = {
 			return
 		}
 		const { namespace, senderId: destination } = message
-		const rawData = message.data
+		const rawData: unknown = message.data
 		let data = rawData
 		if (typeof rawData === 'string') {
 			try {
@@ -338,21 +394,28 @@ const device = {
 		}
 	},
 
-	handleSystemMessage(data) {
-		switch (data?.type) {
+	handleSystemMessage(data: unknown) {
+		const message = data as {
+			type?: unknown
+			activeNamespaces?: unknown
+			statusText?: string
+		} | null
+		switch (message?.type) {
 			case 'ready': {
-				if (Array.isArray(data.activeNamespaces)) {
-					const names = data.activeNamespaces.filter(
-						(name) => !name.startsWith(RESERVED_NAMESPACE_PREFIX) || name === MEDIA_NAMESPACE
+				if (Array.isArray(message.activeNamespaces)) {
+					const names = message.activeNamespaces.filter(
+						(name): name is string =>
+							typeof name === 'string' &&
+							(!name.startsWith(RESERVED_NAMESPACE_PREFIX) || name === MEDIA_NAMESPACE)
 					)
 					this.namespaces = [...new Set([MEDIA_NAMESPACE, ...names])]
 				}
-				if (data.statusText) this.statusText = data.statusText
+				if (message.statusText) this.statusText = message.statusText
 				this.onAppReady()
 				break
 			}
 			case 'setappstate':
-				this.statusText = data.statusText || ''
+				this.statusText = message.statusText || ''
 				this.broadcastSessionUpdate()
 				break
 			// CAF's CastReceiverContext#stop() just closes the window, which presentation-polyfill.js reports
@@ -366,10 +429,12 @@ const device = {
 		}
 	},
 
-	handleMediaMessage(destination, data) {
-		if (!data || typeof data !== 'object') return
-		const pending = this.pendingRequests.get(data.requestId)
-		if (pending) this.pendingRequests.delete(data.requestId)
+	handleMediaMessage(destination: string, message: unknown) {
+		if (!message || typeof message !== 'object') return
+		const data = message as { type?: unknown; requestId?: number; status?: MediaStatus[] | null }
+		const pending =
+			data.requestId !== undefined ? this.pendingRequests.get(data.requestId) : undefined
+		if (pending) this.pendingRequests.delete(data.requestId!)
 
 		if (data.type === 'MEDIA_STATUS') {
 			// Like Chrome, tag each media status with the session ID; the sender SDK needs it to find the session.
@@ -420,9 +485,8 @@ const device = {
 
 	// ---- Sender SDK side (Presentation connections)
 
-	addConnection(connection) {
-		const url = new URL(connection.url)
-		const cast = window.castSenderEmulator?.parseCastUrl?.(connection.url) || parseCastUrl(url)
+	addConnection(connection: PresentationConnection) {
+		const cast = parseCastUrl(connection.url)
 		if (!cast) {
 			console.warn(
 				LOG_PREFIX,
@@ -432,14 +496,14 @@ const device = {
 			return
 		}
 		const { clientId } = cast
-		const info = connection.polyfillInfo || {}
-		const client = {
+		const info = connection.polyfillInfo
+		const client: Client = {
 			clientId,
 			senderId: `${this.transportId}.emulator:${clientId}`,
 			connection,
 			announced: false,
-			reconnect: !!info.reconnect,
-			userAgent: info.userAgent || ''
+			reconnect: !!info?.reconnect,
+			userAgent: info?.userAgent || ''
 		}
 		const previous = this.clients.get(clientId)
 		if (previous && previous.connection !== connection) previous.connection.close()
@@ -461,7 +525,7 @@ const device = {
 		if (this.appReady) this.announceSession(client)
 	},
 
-	removeClient(client) {
+	removeClient(client: Client) {
 		if (this.clients.get(client.clientId) !== client) return
 		this.clients.delete(client.clientId)
 		if (client.announced) {
@@ -473,7 +537,7 @@ const device = {
 		}
 	},
 
-	clientsFor(destination) {
+	clientsFor(destination: string | undefined) {
 		if (!destination || destination === '*')
 			return [...this.clients.values()].filter((c) => c.announced)
 		for (const client of this.clients.values()) {
@@ -483,7 +547,7 @@ const device = {
 	},
 
 	/** Tell a sender that the session started (or that it joined one), like Chrome does after a launch. */
-	announceSession(client) {
+	announceSession(client: Client) {
 		if (client.announced || client.connection.state !== 'connected') return
 		client.announced = true
 		if (!client.reconnect) {
@@ -514,7 +578,7 @@ const device = {
 	},
 
 	sessionInfo() {
-		const session = {
+		const session: JsonObject = {
 			sessionId: this.sessionId,
 			appId: this.appId,
 			transportId: this.transportId,
@@ -536,10 +600,10 @@ const device = {
 	},
 
 	/** Send a message in the format Chrome uses between the Media Router and the sender SDK. */
-	sendToClient(client, type, message, sequenceNumber) {
+	sendToClient(client: Client, type: string, message: unknown, sequenceNumber?: number) {
 		if (client.connection.state !== 'connected') return
 		const isEmpty = !message || (typeof message === 'object' && Object.keys(message).length === 0)
-		const payload = { type, message: isEmpty ? null : message }
+		const payload: SenderMessage = { type, message: isEmpty ? null : message }
 		if (sequenceNumber !== undefined) payload.sequenceNumber = sequenceNumber
 		payload.timeoutMillis = 0
 		payload.clientId = client.clientId
@@ -547,7 +611,7 @@ const device = {
 		client.connection.send(JSON.stringify(payload))
 	},
 
-	sendError(client, sequenceNumber, code, description) {
+	sendError(client: Client, sequenceNumber: number | undefined, code: string, description: string) {
 		this.sendToClient(
 			client,
 			'error',
@@ -556,9 +620,9 @@ const device = {
 		)
 	},
 
-	handleClientMessage(client, raw) {
+	handleClientMessage(client: Client, raw: string) {
 		traceMessage('sender -> emulator', raw)
-		let message
+		let message: SenderMessage
 		try {
 			message = JSON.parse(raw)
 		} catch {
@@ -576,8 +640,11 @@ const device = {
 				break
 
 			case 'app_message': {
-				const namespace = body?.namespaceName
-				if (!this.namespaces.includes(namespace)) {
+				const { namespaceName: namespace, message: appMessage } = (body || {}) as {
+					namespaceName?: string
+					message?: unknown
+				}
+				if (namespace === undefined || !this.namespaces.includes(namespace)) {
 					this.sendError(
 						client,
 						sequenceNumber,
@@ -586,13 +653,13 @@ const device = {
 					)
 					break
 				}
-				this.sendIpc(namespace, client.senderId, body.message)
+				this.sendIpc(namespace, client.senderId, appMessage)
 				this.sendToClient(client, 'app_message', null, sequenceNumber)
 				break
 			}
 
 			case 'v2_message':
-				this.handleV2Message(client, body || {}, sequenceNumber)
+				this.handleV2Message(client, (body || {}) as V2Message, sequenceNumber)
 				break
 
 			case 'leave_session':
@@ -605,9 +672,9 @@ const device = {
 		}
 	},
 
-	handleV2Message(client, body, sequenceNumber) {
+	handleV2Message(client: Client, body: V2Message, sequenceNumber: number | undefined) {
 		const { type } = body
-		if (MEDIA_REQUEST_TYPES.has(type)) {
+		if (type !== undefined && MEDIA_REQUEST_TYPES.has(type)) {
 			const requestId = this.nextRequestId++
 			this.pendingRequests.set(requestId, { clientId: client.clientId, sequenceNumber })
 			this.sendIpc(MEDIA_NAMESPACE, client.senderId, {
@@ -665,19 +732,8 @@ const device = {
 	}
 }
 
-/** Fallback when the sender script (with its URL parser) is not on this page. */
-const parseCastUrl = (url) => {
-	if (url.protocol === 'cast:' && url.pathname) {
-		return { appIds: [url.pathname], clientId: url.searchParams.get('clientId') || '' }
-	}
-	const match = /__castAppId__=([^/(]+)/.exec(url.hash)
-	if (!match) return null
-	const clientId = /__castClientId__=([^/]+)/.exec(url.hash)?.[1] || ''
-	return { appIds: [decodeURIComponent(match[1])], clientId: decodeURIComponent(clientId) }
-}
-
 // The media commands Chrome reports to the sender SDK, by their bit in CAF's supportedMediaCommands.
-const MEDIA_COMMAND_NAMES = [
+const MEDIA_COMMAND_NAMES: Array<[bit: number, name: string]> = [
 	[1 << 0, 'pause'],
 	[1 << 1, 'seek'],
 	[1 << 2, 'stream_volume'],
@@ -685,12 +741,12 @@ const MEDIA_COMMAND_NAMES = [
 	[1 << 6, 'queue_next'],
 	[1 << 7, 'queue_prev']
 ]
-const mediaCommandsToList = (mask) =>
+const mediaCommandsToList = (mask: number) =>
 	MEDIA_COMMAND_NAMES.filter(([bit]) => mask & bit).map(([, name]) => name)
 
 /** All audio and video elements in a document, including inside open shadow roots like <cast-media-player>. */
-const findMediaElements = (root) => {
-	const found = [...root.querySelectorAll('audio, video')]
+const findMediaElements = (root: ParentNode): HTMLMediaElement[] => {
+	const found: HTMLMediaElement[] = [...root.querySelectorAll<HTMLMediaElement>('audio, video')]
 	for (const element of root.querySelectorAll('*')) {
 		if (element.shadowRoot) found.push(...findMediaElements(element.shadowRoot))
 	}
@@ -698,13 +754,14 @@ const findMediaElements = (root) => {
 }
 
 /** Chrome strips null fields from sender messages before handling them. */
-const removeNullFields = (value) => {
+const removeNullFields = (value: unknown) => {
 	if (Array.isArray(value)) {
 		value.forEach(removeNullFields)
 	} else if (value && typeof value === 'object') {
 		for (const key of Object.keys(value)) {
-			if (value[key] === null) delete value[key]
-			else removeNullFields(value[key])
+			const object = value as JsonObject
+			if (object[key] === null) delete object[key]
+			else removeNullFields(object[key])
 		}
 	}
 }
@@ -717,15 +774,13 @@ const removeNullFields = (value) => {
 
 /**
  * Media elements whose play() was rejected by the autoplay policy, and that nobody paused since.
- * @type {Set<HTMLMediaElement>}
  */
-const blockedMedia = new Set()
-/** @type {HTMLButtonElement | null} */
-let activationOverlay = null
+const blockedMedia = new Set<HTMLMediaElement>()
+let activationOverlay: HTMLButtonElement | null = null
 
 const nativePlay = HTMLMediaElement.prototype.play
 const nativePause = HTMLMediaElement.prototype.pause
-HTMLMediaElement.prototype.play = function () {
+HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
 	blockedMedia.delete(this)
 	const result = nativePlay.call(this)
 	result?.catch?.((error) => {
@@ -735,7 +790,7 @@ HTMLMediaElement.prototype.play = function () {
 	})
 	return result
 }
-HTMLMediaElement.prototype.pause = function () {
+HTMLMediaElement.prototype.pause = function (this: HTMLMediaElement) {
 	blockedMedia.delete(this)
 	return nativePause.call(this)
 }

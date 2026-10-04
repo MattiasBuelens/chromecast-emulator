@@ -15,6 +15,48 @@
  * Presentation URLs that are not plain http(s) URLs (such as `cast:` URLs) can be
  * mapped to a page URL with `presentationPolyfill.addUrlResolver()`.
  */
+import type * as PresentationApi from './shared/presentation-api'
+import { defineEventHandlers, randomId } from './shared/utils'
+
+export interface KnownPresentation {
+	id: string
+	url: string | null
+}
+
+export interface PresentationPolyfill {
+	/**
+	 * Register a function that maps a presentation URL to the URL of the page to open
+	 * for it, or returns null when it does not handle that URL.
+	 */
+	addUrlResolver(resolver: (presentationUrl: string) => string | null): void
+	/**
+	 * Register a function that picks the ID for a new presentation of a presentation URL,
+	 * or returns null to leave it to the next one (or a random ID).
+	 */
+	addPresentationIdGenerator(generator: (presentationUrl: string) => string | null): void
+	/**
+	 * Register a function that maps the ID passed to `PresentationRequest#reconnect()` to the ID
+	 * of a known presentation, or returns null when it does not handle that ID.
+	 */
+	addReconnectResolver(
+		resolver: (
+			requestedId: string,
+			requestUrls: readonly string[],
+			known: KnownPresentation[]
+		) => string | null
+	): void
+	/** Whether this page was opened as a presentation, by a page that also uses the polyfill. */
+	isReceivingWindow: boolean
+	/** The browser's own `navigator.presentation`, if any. */
+	nativePresentation: PresentationApi.Presentation | undefined
+}
+
+declare global {
+	interface Window {
+		presentationPolyfill?: PresentationPolyfill
+	}
+}
+
 // Every message we post carries this key, so we can ignore unrelated postMessage() traffic.
 const MESSAGE_KEY = '__presentationPolyfill'
 // The receiving window's name starts with this prefix, followed by the presentation ID.
@@ -28,45 +70,58 @@ const LOG_PREFIX = '[presentation-polyfill]'
 
 const NativePresentation = navigator.presentation
 
+/** The messages that the controlling and receiving windows exchange. */
+type PolyfillMessage =
+	| { type: 'receiver-hello' | 'receiver-alive'; presentationId: string; url: string | null }
+	| {
+			type: 'connect'
+			connectionId: string
+			presentationId: string
+			url: string
+			reconnect: boolean
+			userAgent: string
+	  }
+	| { type: 'connected'; connectionId: string }
+	| { type: 'message'; connectionId: string; data: MessageData }
+	| { type: 'close'; connectionId: string; reason: CloseReason; message: string }
+	| { type: 'terminate'; connectionId: string }
+	| { type: 'terminated' }
+
+type MessageType = PolyfillMessage['type']
+type MessagePayload<T extends MessageType> = Omit<Extract<PolyfillMessage, { type: T }>, 'type'>
+/** A message as it is posted: the type is under MESSAGE_KEY. */
+type PostedMessage = { [MESSAGE_KEY]: MessageType } & Partial<Record<string, unknown>>
+
+type MessageData = string | Blob | ArrayBuffer
+type CloseReason = PresentationApi.PresentationConnectionCloseReason
+
 // ----------- Helpers
 
-const randomId = () =>
-	typeof crypto !== 'undefined' && crypto.randomUUID
-		? crypto.randomUUID()
-		: Date.now().toString(36) + Math.random().toString(36).slice(2)
+const domException = (name: string, message?: string) => new DOMException(message || name, name)
 
-const domException = (name, message) => new DOMException(message || name, name)
-
-const post = (target, type, payload) => {
+const post = <T extends MessageType>(target: Window, type: T, payload: MessagePayload<T>) => {
 	// The receiving page may live on another origin, so we cannot restrict the target origin.
 	// Both sides verify event.source instead.
 	target.postMessage({ [MESSAGE_KEY]: type, ...payload }, '*')
 }
 
-const defineEventHandlers = (proto, names) => {
-	for (const name of names) {
-		const key = Symbol(`on${name}`)
-		Object.defineProperty(proto, `on${name}`, {
-			configurable: true,
-			enumerable: true,
-			get() {
-				return this[key] || null
-			},
-			set(handler) {
-				if (this[key]) this.removeEventListener(name, this[key])
-				this[key] = typeof handler === 'function' ? handler : null
-				if (this[key]) this.addEventListener(name, this[key])
-			}
-		})
-	}
+/** Read a message that the other side posted, or null if it is not one of ours. */
+const readMessage = (data: unknown): PolyfillMessage | null => {
+	if (!data || typeof data !== 'object' || !(MESSAGE_KEY in data)) return null
+	const { [MESSAGE_KEY]: type, ...payload } = data as PostedMessage
+	return { type, ...payload } as PolyfillMessage
 }
 
-const urlResolvers = []
-const idGenerators = []
-const reconnectResolvers = []
+type UrlResolver = Parameters<PresentationPolyfill['addUrlResolver']>[0]
+type IdGenerator = Parameters<PresentationPolyfill['addPresentationIdGenerator']>[0]
+type ReconnectResolver = Parameters<PresentationPolyfill['addReconnectResolver']>[0]
+
+const urlResolvers: UrlResolver[] = []
+const idGenerators: IdGenerator[] = []
+const reconnectResolvers: ReconnectResolver[] = []
 
 /** Pick the ID for a new presentation of the given presentation URL. */
-const createPresentationId = (presentationUrl) => {
+const createPresentationId = (presentationUrl: string): string => {
 	for (const generator of idGenerators) {
 		const id = generator(presentationUrl)
 		if (id) return id
@@ -75,7 +130,7 @@ const createPresentationId = (presentationUrl) => {
 }
 
 /** Map a presentation URL to the URL of the page to open, or null if unsupported. */
-const resolvePageUrl = (presentationUrl) => {
+const resolvePageUrl = (presentationUrl: string): string | null => {
 	for (const resolver of urlResolvers) {
 		const resolved = resolver(presentationUrl)
 		if (resolved) return resolved
@@ -86,15 +141,26 @@ const resolvePageUrl = (presentationUrl) => {
 
 // ----------- Events
 
-class PresentationConnectionAvailableEvent extends Event {
-	constructor(type, init) {
+class PresentationConnectionAvailableEvent
+	extends Event
+	implements PresentationApi.PresentationConnectionAvailableEvent
+{
+	readonly connection: PresentationConnection
+
+	constructor(type: string, init: EventInit & { connection: PresentationConnection }) {
 		super(type, init)
 		this.connection = init.connection
 	}
 }
 
-class PresentationConnectionCloseEvent extends Event {
-	constructor(type, init) {
+class PresentationConnectionCloseEvent
+	extends Event
+	implements PresentationApi.PresentationConnectionCloseEvent
+{
+	readonly reason: CloseReason
+	readonly message: string
+
+	constructor(type: string, init: EventInit & { reason: CloseReason; message?: string }) {
 		super(type, init)
 		this.reason = init.reason
 		this.message = init.message || ''
@@ -103,23 +169,39 @@ class PresentationConnectionCloseEvent extends Event {
 
 // ----------- PresentationConnection
 
+/** Carries a connection's messages to the other side. */
+interface Transport {
+	send(data: MessageData): void
+	close(reason: CloseReason, message: string): void
+	terminate(): void
+}
+
 const transportKey = Symbol('transport')
 
-class PresentationConnection extends EventTarget {
-	constructor(id, url, transport) {
+class PresentationConnection extends EventTarget implements PresentationApi.PresentationConnection {
+	readonly id: string
+	readonly url: string
+	state: PresentationApi.PresentationConnectionState = 'connecting'
+	binaryType: BinaryType = 'arraybuffer'
+	declare readonly polyfillInfo?: PresentationApi.PresentationConnectionPolyfillInfo
+	declare onconnect: PresentationApi.PresentationConnection['onconnect']
+	declare onclose: PresentationApi.PresentationConnection['onclose']
+	declare onterminate: PresentationApi.PresentationConnection['onterminate']
+	declare onmessage: PresentationApi.PresentationConnection['onmessage']
+	private readonly [transportKey]: Transport
+
+	constructor(id: string, url: string, transport: Transport) {
 		super()
 		this.id = id
 		this.url = url
-		this.state = 'connecting'
-		this.binaryType = 'arraybuffer'
 		this[transportKey] = transport
 	}
 
-	send(data) {
+	send(data: string | Blob | ArrayBuffer | ArrayBufferView) {
 		if (this.state !== 'connected') {
 			throw domException('InvalidStateError', `Connection is ${this.state}`)
 		}
-		this[transportKey].send(data)
+		this[transportKey].send(toTransferable(data))
 	}
 
 	close() {
@@ -135,47 +217,58 @@ class PresentationConnection extends EventTarget {
 }
 defineEventHandlers(PresentationConnection.prototype, ['connect', 'close', 'terminate', 'message'])
 
-const _connected = (connection) => {
+const _connected = (connection: PresentationConnection) => {
 	if (connection.state !== 'connecting') return
 	connection.state = 'connected'
 	connection.dispatchEvent(new Event('connect'))
 }
 
-const _closed = (connection, reason, message) => {
+const _closed = (connection: PresentationConnection, reason: CloseReason, message?: string) => {
 	if (connection.state !== 'connecting' && connection.state !== 'connected') return
 	connection.state = 'closed'
 	connection.dispatchEvent(new PresentationConnectionCloseEvent('close', { reason, message }))
 }
 
-const _terminated = (connection) => {
+const _terminated = (connection: PresentationConnection) => {
 	if (connection.state === 'terminated') return
 	connection.state = 'terminated'
 	connection.dispatchEvent(new Event('terminate'))
 }
 
-const _received = (connection, data) => {
+const _received = (connection: PresentationConnection, data: MessageData) => {
 	if (connection.state !== 'connected') return
 	if (data instanceof ArrayBuffer && connection.binaryType === 'blob') data = new Blob([data])
 	connection.dispatchEvent(new MessageEvent('message', { data }))
 }
 
-const toTransferable = (data) => {
+const toTransferable = (data: unknown): MessageData => {
 	if (typeof data === 'string' || data instanceof Blob || data instanceof ArrayBuffer) return data
 	if (ArrayBuffer.isView(data)) {
-		return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+		return new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice().buffer
 	}
 	throw new TypeError('Unsupported message type')
 }
 
 // ----------- Controlling side
 
-/**
- * Presentations started (or rediscovered) by this page, by presentation ID.
- * @type {Map<string, {id: string, url: string, window: Window, connections: Map<string, PresentationConnection>, receiverReady: boolean, onReceiverReady: Array<{resolve: () => void, reject: (error: Error) => void}>}>}
- */
-const presentations = new Map()
+/** A presentation started (or rediscovered) by this page. */
+interface ControlledPresentation {
+	id: string
+	url: string | null
+	window: Window
+	connections: Map<string, PresentationConnection>
+	receiverReady: boolean
+	onReceiverReady: Array<{ resolve: () => void; reject: (error: Error) => void }>
+}
 
-const getOrCreatePresentation = (id, url, win) => {
+/** Presentations started (or rediscovered) by this page, by presentation ID. */
+const presentations = new Map<string, ControlledPresentation>()
+
+const getOrCreatePresentation = (
+	id: string,
+	url: string | null,
+	win: Window
+): ControlledPresentation => {
 	let presentation = presentations.get(id)
 	if (!presentation) {
 		presentation = {
@@ -192,7 +285,7 @@ const getOrCreatePresentation = (id, url, win) => {
 	return presentation
 }
 
-const watchForClosedWindow = (presentation) => {
+const watchForClosedWindow = (presentation: ControlledPresentation) => {
 	const timer = setInterval(() => {
 		if (presentation.window.closed) {
 			clearInterval(timer)
@@ -201,7 +294,7 @@ const watchForClosedWindow = (presentation) => {
 	}, CLOSED_WINDOW_POLL_MS)
 }
 
-const terminatePresentation = (presentation) => {
+const terminatePresentation = (presentation: ControlledPresentation) => {
 	presentations.delete(presentation.id)
 	// The window closed before the receiver was ready, e.g. because the user closed it.
 	presentation.onReceiverReady
@@ -213,8 +306,8 @@ const terminatePresentation = (presentation) => {
 	presentation.connections.clear()
 }
 
-const whenReceiverReady = (presentation, timeoutMs) =>
-	new Promise((resolve, reject) => {
+const whenReceiverReady = (presentation: ControlledPresentation, timeoutMs?: number) =>
+	new Promise<void>((resolve, reject) => {
 		if (presentation.receiverReady) return resolve()
 		presentation.onReceiverReady.push({ resolve, reject })
 		if (timeoutMs) {
@@ -223,11 +316,15 @@ const whenReceiverReady = (presentation, timeoutMs) =>
 	})
 
 /** Create a controlling connection to a receiving window, and ask the receiver to accept it. */
-const connectToPresentation = (presentation, url, { reconnect }) => {
+const connectToPresentation = (
+	presentation: ControlledPresentation,
+	url: string,
+	{ reconnect }: { reconnect: boolean }
+) => {
 	const connectionId = randomId()
 	const connection = new PresentationConnection(presentation.id, url, {
 		send(data) {
-			post(presentation.window, 'message', { connectionId, data: toTransferable(data) })
+			post(presentation.window, 'message', { connectionId, data })
 		},
 		close(reason, message) {
 			presentation.connections.delete(connectionId)
@@ -250,7 +347,7 @@ const connectToPresentation = (presentation, url, { reconnect }) => {
 	return connection
 }
 
-const findPresentationBySource = (source) => {
+const findPresentationBySource = (source: MessageEventSource | null) => {
 	for (const presentation of presentations.values()) {
 		if (presentation.window === source) return presentation
 	}
@@ -260,15 +357,16 @@ const findPresentationBySource = (source) => {
 /** Handle messages from the receiving windows that this page opened. */
 const listenToReceivers = () => {
 	window.addEventListener('message', (event) => {
-		const data = event.data
-		if (!data || typeof data !== 'object' || !(MESSAGE_KEY in data)) return
-		const type = data[MESSAGE_KEY]
+		const message = readMessage(event.data)
+		if (!message) return
 
 		// Heartbeats let a reloaded controlling page find receivers it opened before the reload.
-		if (type === 'receiver-hello' || type === 'receiver-alive') {
-			if (!event.source || !data.presentationId) return
-			const presentation = getOrCreatePresentation(data.presentationId, data.url, event.source)
-			if (presentation.window !== event.source) return
+		if (message.type === 'receiver-hello' || message.type === 'receiver-alive') {
+			// The receiving window may be cross-origin, so `instanceof Window` would not work.
+			const source = event.source as Window | null
+			if (!source || !message.presentationId) return
+			const presentation = getOrCreatePresentation(message.presentationId, message.url, source)
+			if (presentation.window !== source) return
 			if (!presentation.receiverReady) {
 				presentation.receiverReady = true
 				presentation.onReceiverReady.splice(0).forEach(({ resolve }) => resolve())
@@ -278,19 +376,20 @@ const listenToReceivers = () => {
 
 		const presentation = findPresentationBySource(event.source)
 		if (!presentation) return
-		const connection = presentation.connections.get(data.connectionId)
+		const connection =
+			'connectionId' in message ? presentation.connections.get(message.connectionId) : undefined
 
-		switch (type) {
+		switch (message.type) {
 			case 'connected':
 				if (connection) _connected(connection)
 				break
 			case 'message':
-				if (connection) _received(connection, data.data)
+				if (connection) _received(connection, message.data)
 				break
 			case 'close':
 				if (connection) {
-					presentation.connections.delete(data.connectionId)
-					_closed(connection, data.reason || 'closed', data.message)
+					presentation.connections.delete(message.connectionId)
+					_closed(connection, message.reason || 'closed', message.message)
 				}
 				break
 			case 'terminated':
@@ -310,20 +409,29 @@ const listenToReceivers = () => {
 	})
 }
 
-class PresentationAvailability extends EventTarget {
-	constructor(value) {
+class PresentationAvailability
+	extends EventTarget
+	implements PresentationApi.PresentationAvailability
+{
+	readonly value: boolean
+	declare onchange: PresentationApi.PresentationAvailability['onchange']
+
+	constructor(value: boolean) {
 		super()
 		this.value = value
 	}
 }
 defineEventHandlers(PresentationAvailability.prototype, ['change'])
 
-const availabilityKey = Symbol('availability')
 // Like the spec says, only one start() may be in progress at a time, across all requests.
 let startInProgress = false
 
-class PresentationRequest extends EventTarget {
-	constructor(urls) {
+class PresentationRequest extends EventTarget implements PresentationApi.PresentationRequest {
+	readonly urls: readonly string[]
+	declare onconnectionavailable: PresentationApi.PresentationRequest['onconnectionavailable']
+	private availability: Promise<PresentationAvailability> | undefined
+
+	constructor(urls: string | string[]) {
 		super()
 		const list = Array.isArray(urls) ? urls : [urls]
 		if (list.length === 0) throw domException('NotSupportedError', 'No presentation URLs')
@@ -337,7 +445,7 @@ class PresentationRequest extends EventTarget {
 	}
 
 	/** Pick the first presentation URL we know how to open. */
-	_selectUrl() {
+	private _selectUrl() {
 		for (const url of this.urls) {
 			const pageUrl = resolvePageUrl(url)
 			if (pageUrl) return { url, pageUrl }
@@ -345,7 +453,7 @@ class PresentationRequest extends EventTarget {
 		return null
 	}
 
-	start() {
+	start(): Promise<PresentationConnection> {
 		if (startInProgress) {
 			return Promise.reject(
 				domException('OperationError', 'Another presentation is already being started')
@@ -374,7 +482,7 @@ class PresentationRequest extends EventTarget {
 			.finally(() => (startInProgress = false))
 	}
 
-	reconnect(requestedId) {
+	reconnect(requestedId: string): Promise<PresentationConnection> {
 		// Map special presentation IDs (like the Cast SDK's "auto-join") to a known presentation.
 		const resolveId = () => {
 			if (presentations.has(requestedId)) return requestedId
@@ -402,7 +510,7 @@ class PresentationRequest extends EventTarget {
 
 		const wait = found
 			? whenReceiverReady(found, RECEIVER_DISCOVERY_TIMEOUT_MS)
-			: new Promise((resolve, reject) => {
+			: new Promise<void>((resolve, reject) => {
 					// After a reload, we only learn about the receiver from its next heartbeat.
 					const started = Date.now()
 					const poll = setInterval(() => {
@@ -422,21 +530,21 @@ class PresentationRequest extends EventTarget {
 			if (!presentation || presentation.window.closed) {
 				throw domException('NotFoundError', `No presentation with ID ${presentationId}`)
 			}
-			const url = this._selectUrl()?.url || presentation.url
+			const url = this._selectUrl()?.url || presentation.url || this.urls[0]
 			const connection = connectToPresentation(presentation, url, { reconnect: true })
 			this._fireConnectionAvailable(connection)
 			return connection
 		})
 	}
 
-	getAvailability() {
-		if (!this[availabilityKey]) {
-			this[availabilityKey] = Promise.resolve(new PresentationAvailability(!!this._selectUrl()))
+	getAvailability(): Promise<PresentationAvailability> {
+		if (!this.availability) {
+			this.availability = Promise.resolve(new PresentationAvailability(!!this._selectUrl()))
 		}
-		return this[availabilityKey]
+		return this.availability
 	}
 
-	_fireConnectionAvailable(connection) {
+	private _fireConnectionAvailable(connection: PresentationConnection) {
 		setTimeout(() =>
 			this.dispatchEvent(
 				new PresentationConnectionAvailableEvent('connectionavailable', { connection })
@@ -448,11 +556,13 @@ defineEventHandlers(PresentationRequest.prototype, ['connectionavailable'])
 
 // ----------- Receiving side
 
-class PresentationConnectionList extends EventTarget {
-	constructor() {
-		super()
-		this._connections = []
-	}
+class PresentationConnectionList
+	extends EventTarget
+	implements PresentationApi.PresentationConnectionList
+{
+	/** @internal Every connection this receiver accepted, including closed ones. */
+	readonly _connections: PresentationConnection[] = []
+	declare onconnectionavailable: PresentationApi.PresentationConnectionList['onconnectionavailable']
 
 	get connections() {
 		return this._connections.filter((c) => c.state === 'connected' || c.state === 'connecting')
@@ -460,41 +570,41 @@ class PresentationConnectionList extends EventTarget {
 }
 defineEventHandlers(PresentationConnectionList.prototype, ['connectionavailable'])
 
-class PresentationReceiver {
-	constructor(connectionList) {
-		this._connectionList = connectionList
-		this._listReady = new Promise((resolve) => (this._resolveList = resolve))
-	}
+class PresentationReceiver implements PresentationApi.PresentationReceiver {
+	/** @internal Resolves `connectionList`, once the first connection comes in. */
+	_resolveList!: (list: PresentationConnectionList) => void
+	private readonly listReady = new Promise<PresentationConnectionList>(
+		(resolve) => (this._resolveList = resolve)
+	)
 
 	get connectionList() {
-		return this._listReady
+		return this.listReady
 	}
 }
 
 const createReceiver = () => {
 	const presentationId = window.name.slice(WINDOW_NAME_PREFIX.length)
-	const controller = window.opener
+	const controller: Window = window.opener
 	const list = new PresentationConnectionList()
-	const receiver = new PresentationReceiver(list)
-	/** @type {Map<string, PresentationConnection>} */
-	const connections = new Map()
-	let presentationUrl = null
+	const receiver = new PresentationReceiver()
+	const connections = new Map<string, PresentationConnection>()
+	let presentationUrl: string | null = null
 
 	const sendTerminated = () => post(controller, 'terminated', {})
 
 	window.addEventListener('message', (event) => {
-		const data = event.data
 		if (event.source !== controller) return
-		if (!data || typeof data !== 'object' || !(MESSAGE_KEY in data)) return
-		const { connectionId } = data
+		const message = readMessage(event.data)
+		if (!message) return
 
-		switch (data[MESSAGE_KEY]) {
+		switch (message.type) {
 			case 'connect': {
+				const { connectionId } = message
 				if (connections.has(connectionId)) return
-				presentationUrl = presentationUrl || data.url
-				const connection = new PresentationConnection(presentationId, data.url, {
-					send(message) {
-						post(controller, 'message', { connectionId, data: toTransferable(message) })
+				presentationUrl = presentationUrl || message.url
+				const connection = new PresentationConnection(presentationId, message.url, {
+					send(data) {
+						post(controller, 'message', { connectionId, data })
 					},
 					close(reason, message) {
 						post(controller, 'close', { connectionId, reason, message })
@@ -505,9 +615,11 @@ const createReceiver = () => {
 						window.close()
 					}
 				})
-				// Not part of the spec: lets receiver-side code tell new sessions from reconnects.
 				Object.defineProperty(connection, 'polyfillInfo', {
-					value: Object.freeze({ reconnect: !!data.reconnect, userAgent: data.userAgent || '' })
+					value: Object.freeze({
+						reconnect: !!message.reconnect,
+						userAgent: message.userAgent || ''
+					})
 				})
 				connections.set(connectionId, connection)
 				list._connections.push(connection)
@@ -520,15 +632,15 @@ const createReceiver = () => {
 				break
 			}
 			case 'message': {
-				const connection = connections.get(connectionId)
-				if (connection) _received(connection, data.data)
+				const connection = connections.get(message.connectionId)
+				if (connection) _received(connection, message.data)
 				break
 			}
 			case 'close': {
-				const connection = connections.get(connectionId)
+				const connection = connections.get(message.connectionId)
 				if (connection) {
-					connections.delete(connectionId)
-					_closed(connection, data.reason || 'closed', data.message)
+					connections.delete(message.connectionId)
+					_closed(connection, message.reason || 'closed', message.message)
 				}
 				break
 			}
@@ -540,7 +652,8 @@ const createReceiver = () => {
 		}
 	})
 
-	const hello = (type) => post(controller, type, { presentationId, url: presentationUrl })
+	const hello = (type: 'receiver-hello' | 'receiver-alive') =>
+		post(controller, type, { presentationId, url: presentationUrl })
 	hello('receiver-hello')
 	setInterval(() => {
 		if (!controller.closed) hello('receiver-alive')
@@ -557,8 +670,8 @@ const install = () => {
 
 	const isReceivingWindow = window.name.startsWith(WINDOW_NAME_PREFIX) && !!window.opener
 
-	let defaultRequest = null
-	const presentation = {
+	let defaultRequest: PresentationRequest | null = null
+	const presentation: PresentationApi.Presentation = {
 		get defaultRequest() {
 			return defaultRequest
 		},
@@ -585,27 +698,12 @@ const install = () => {
 	})
 
 	window.presentationPolyfill = {
-		/**
-		 * Register a function that maps a presentation URL to the URL of the page to open
-		 * for it, or returns null when it does not handle that URL.
-		 * @param {(presentationUrl: string) => string | null} resolver
-		 */
 		addUrlResolver(resolver) {
 			urlResolvers.push(resolver)
 		},
-		/**
-		 * Register a function that picks the ID for a new presentation of a presentation URL,
-		 * or returns null to leave it to the next one (or a random ID).
-		 * @param {(presentationUrl: string) => string | null} generator
-		 */
 		addPresentationIdGenerator(generator) {
 			idGenerators.push(generator)
 		},
-		/**
-		 * Register a function that maps the ID passed to `PresentationRequest#reconnect()` to the ID
-		 * of a known presentation, or returns null when it does not handle that ID.
-		 * @param {(requestedId: string, requestUrls: string[], known: Array<{id: string, url: string | null}>) => string | null} resolver
-		 */
 		addReconnectResolver(resolver) {
 			reconnectResolvers.push(resolver)
 		},
