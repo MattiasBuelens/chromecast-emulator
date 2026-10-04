@@ -33,3 +33,8 @@ npm publish
 ```
 
 `prepack` builds `dist/` first, so the published package is always up to date with `src/`.
+
+## License
+
+[MIT](./LICENSE), except for the demo sender in [`demo/sender`](./demo/sender), which is based on
+Google's CastVideos-chrome sample and licensed under the [Apache License 2.0](./demo/sender/LICENSE).
