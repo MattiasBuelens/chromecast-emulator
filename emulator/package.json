@@ -47,13 +47,16 @@
 	],
 	"sideEffects": true,
 	"scripts": {
-		"build": "node build.js",
-		"prepack": "node build.js"
-	},
-	"devDependencies": {
-		"esbuild": "^0.25.0"
+		"build": "tsc && tsdown",
+		"typecheck": "tsc",
+		"prepack": "pnpm run build"
 	},
 	"publishConfig": {
 		"access": "public"
+	},
+	"devDependencies": {
+		"@typescript/lib-dom": "npm:modern-web-types@^0.6.0",
+		"tsdown": "^0.23.0",
+		"typescript": "^7.0.2"
 	}
 }
