@@ -96,3 +96,46 @@ test('casts and controls media from the sender to the receiver', async ({ page: 
 		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
 		.toBe('SESSION_ENDED')
 })
+
+test('stops casting from the cast button', async ({ page: sender }) => {
+	await sender.goto('/sender/')
+	await sender.waitForFunction(
+		() => window.cast?.framework?.CastContext.getInstance().getCastState() === 'NOT_CONNECTED'
+	)
+	const [receiver] = await Promise.all([
+		sender.waitForEvent('popup'),
+		sender.locator('#castbutton').click()
+	])
+	await expect(receiver.locator('cast-media-player')).toBeAttached()
+	await expect
+		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+		.toBe('SESSION_STARTED')
+
+	// While casting, the cast button shows the running session instead of starting another one.
+	let popups = 0
+	sender.on('popup', () => popups++)
+	await sender.locator('#castbutton').click()
+	const dialog = sender.getByRole('dialog', { name: 'Presenting' })
+	await expect(dialog).toBeVisible()
+
+	// Closing the dialog keeps casting.
+	await dialog.getByRole('button', { name: 'Close' }).click()
+	await expect(dialog).toBeHidden()
+	expect(receiver.isClosed()).toBe(false)
+	expect(
+		await sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
+	).toBe('SESSION_STARTED')
+
+	// Stop casting: the receiver closes its window.
+	await sender.locator('#castbutton').click()
+	await dialog.getByRole('button', { name: 'Stop' }).click()
+	await expect(dialog).toBeHidden()
+	await expect.poll(() => receiver.isClosed()).toBe(true)
+	await expect
+		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+		.toBe('SESSION_ENDED')
+	await expect
+		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getCastState()))
+		.toBe('NOT_CONNECTED')
+	expect(popups).toBe(0)
+})
