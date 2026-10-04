@@ -270,6 +270,11 @@ interface ControlledPresentation {
 	id: string
 	url: string | null
 	window: Window
+	/**
+	 * True if this page started it with `PresentationRequest#start()`, false if it rediscovered it
+	 * from receiver heartbeats (e.g. after a reload).
+	 */
+	started: boolean
 	connections: Map<string, PresentationConnection>
 	receiverReady: boolean
 	onReceiverReady: Array<{ resolve: () => void; reject: (error: Error) => void }>
@@ -289,6 +294,7 @@ const getOrCreatePresentation = (
 			id,
 			url,
 			window: win,
+			started: false,
 			connections: new Map(),
 			receiverReady: false,
 			onReceiverReady: []
@@ -483,6 +489,7 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 			)
 		}
 		const presentation = getOrCreatePresentation(presentationId, selected.url, win)
+		presentation.started = true
 		startInProgress = true
 		return whenReceiverReady(presentation)
 			.then(() => {
@@ -494,15 +501,21 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 	}
 
 	reconnect(requestedId: string): Promise<PresentationConnection> {
+		// Presentations that this page starts from now on are not candidates: reconnect() is about
+		// presentations that already exist. Otherwise the poll below would grab a presentation that
+		// start() opens while we're still waiting (e.g. the Cast SDK's "auto-join" on page load).
+		const candidates = new Set(presentations.keys())
+		const isCandidate = (p: ControlledPresentation) => !p.started || candidates.has(p.id)
 		// Map special presentation IDs (like the Cast SDK's "auto-join") to a known presentation.
 		const resolveId = () => {
-			if (presentations.has(requestedId)) return requestedId
-			const known = [...presentations.values()]
-				.filter((p) => !p.window.closed)
+			const requested = presentations.get(requestedId)
+			if (requested && isCandidate(requested)) return requestedId
+			const known: KnownPresentation[] = [...presentations.values()]
+				.filter((p) => isCandidate(p) && !p.window.closed)
 				.map(({ id, url }) => ({ id, url }))
 			for (const resolver of reconnectResolvers) {
 				const id = resolver(requestedId, this.urls, known)
-				if (id && presentations.has(id)) return id
+				if (id && known.some((p) => p.id === id)) return id
 			}
 			return requestedId
 		}
@@ -526,7 +539,8 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 					const started = Date.now()
 					const poll = setInterval(() => {
 						presentationId = resolveId()
-						if (presentations.has(presentationId)) {
+						const presentation = presentations.get(presentationId)
+						if (presentation && isCandidate(presentation)) {
 							clearInterval(poll)
 							resolve()
 						} else if (Date.now() - started > RECEIVER_DISCOVERY_TIMEOUT_MS) {
