@@ -73,6 +73,10 @@ Clicking the cast button now opens the receiver page in a popup window. Allow po
 development server if the browser blocks it. Reloading the sender page rejoins the running
 session, just like with a real Chromecast.
 
+While casting, clicking the cast button again shows a small dialog in the sender page with the
+running session, like Chrome's Cast dialog. Click **Stop** there to stop casting, which closes the
+receiver window.
+
 ### Receiver
 
 Load the polyfill and the receiver emulator **before** the Cast Web Receiver SDK:

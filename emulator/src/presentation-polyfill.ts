@@ -15,6 +15,7 @@
  * Presentation URLs that are not plain http(s) URLs (such as `cast:` URLs) can be
  * mapped to a page URL with `presentationPolyfill.addUrlResolver()`.
  */
+import { showPresentationDialog } from './shared/presentation-dialog'
 import { defineEventHandlers, randomId } from './shared/utils'
 
 export interface KnownPresentation {
@@ -326,6 +327,16 @@ const terminatePresentation = (presentation: ControlledPresentation) => {
 	presentation.connections.clear()
 }
 
+/** Terminate a presentation from the controlling side: close its window and tell everyone. */
+const stopPresentation = (presentation: ControlledPresentation, connectionId = '') => {
+	post(presentation.window, 'terminate', { connectionId })
+	presentation.window.close()
+	terminatePresentation(presentation)
+}
+
+/** The presentations whose window is still open. */
+const livePresentations = () => [...presentations.values()].filter((p) => !p.window.closed)
+
 const whenReceiverReady = (presentation: ControlledPresentation, timeoutMs?: number) =>
 	new Promise<void>((resolve, reject) => {
 		if (presentation.receiverReady) return resolve()
@@ -351,9 +362,7 @@ const connectToPresentation = (
 			post(presentation.window, 'close', { connectionId, reason, message })
 		},
 		terminate() {
-			post(presentation.window, 'terminate', { connectionId })
-			presentation.window.close()
-			terminatePresentation(presentation)
+			stopPresentation(presentation, connectionId)
 		}
 	})
 	presentation.connections.set(connectionId, connection)
@@ -480,6 +489,10 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 		if (!selected) {
 			return Promise.reject(domException('NotFoundError', 'No available presentation display'))
 		}
+		// While presenting, Chrome shows the running presentation in its dialog, with a button to
+		// stop it, instead of starting another one.
+		const live = livePresentations()
+		if (live.length > 0) return this._showDialog(live)
 		// Open the window synchronously, so it still counts as part of the user gesture.
 		const presentationId = createPresentationId(selected.url)
 		const win = window.open(selected.pageUrl, WINDOW_NAME_PREFIX + presentationId, WINDOW_FEATURES)
@@ -496,6 +509,19 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 				const connection = connectToPresentation(presentation, selected.url, { reconnect: false })
 				this._fireConnectionAvailable(connection)
 				return connection
+			})
+			.finally(() => (startInProgress = false))
+	}
+
+	private _showDialog(live: ControlledPresentation[]): Promise<PresentationConnection> {
+		startInProgress = true
+		const items = live.map(({ id, url }) => ({ id, description: url?.split('?')[0] || '' }))
+		return showPresentationDialog(items)
+			.then((stopId) => {
+				const presentation = stopId && presentations.get(stopId)
+				if (presentation) stopPresentation(presentation)
+				// Like closing the browser's dialog, this does not start a presentation.
+				throw domException('AbortError', 'The presentation dialog was closed')
 			})
 			.finally(() => (startInProgress = false))
 	}
