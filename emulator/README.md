@@ -167,3 +167,7 @@ adds a minified version of each, and runs automatically before `npm publish`.
 - [Google Cast - Main Messages](https://developers.google.com/cast/docs/media/messages)
 - [Google Cast - Custom Web Receiver](https://developers.google.com/cast/docs/web_receiver/basic)
 - [Google Cast - Custom Web Sender](https://developers.google.com/cast/docs/web_sender)
+
+## License
+
+[MIT](./LICENSE)
