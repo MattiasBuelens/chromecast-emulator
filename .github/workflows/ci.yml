@@ -19,6 +19,19 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
+      - name: Configure GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: pages
+        uses: actions/configure-pages@v6
+      - name: Build demo for GitHub Pages
+        if: steps.pages.outcome == 'success'
+        # Serve the demo from the Pages site's path, e.g. /chromecast-emulator/.
+        run: pnpm --filter chromecast-emulator-demo exec vite build --base "${{ steps.pages.outputs.base_path }}/"
+      - name: Upload GitHub Pages artifact
+        if: steps.pages.outcome == 'success'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: demo/dist/
 
   test-e2e:
     timeout-minutes: 60
@@ -42,3 +55,21 @@ jobs:
           name: playwright-report
           path: demo/playwright-report/
           retention-days: 30
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, test-e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
