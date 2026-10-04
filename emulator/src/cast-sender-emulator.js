@@ -18,53 +18,49 @@
  * `window.castEmulatorConfig = { receivers: { '<appId>': '<url>' }, receiverUrl: '<fallback>' }`
  * before loading this script.
  */
-;(function () {
-	'use strict'
+const LOG_PREFIX = '[cast-sender-emulator]'
 
-	const LOG_PREFIX = '[cast-sender-emulator]'
-
-	if (!window.presentationPolyfill) {
-		console.error(LOG_PREFIX, 'presentation-polyfill.js must be loaded first')
-		return
+/**
+ * Parse a Cast presentation URL, in either of the forms Chrome accepts:
+ * - `cast:<appId>?clientId=...&autoJoinPolicy=...`
+ * - `https://google.com/cast#__castAppId__=<appId>/__castClientId__=...` (legacy)
+ * @returns {{appIds: string[], clientId: string} | null}
+ */
+const parseCastUrl = (presentationUrl) => {
+	const url = new URL(presentationUrl)
+	if (url.protocol === 'cast:') {
+		const appId = url.pathname
+		return appId ? { appIds: [appId], clientId: url.searchParams.get('clientId') || '' } : null
 	}
+	if (/^https?:$/.test(url.protocol) && url.hostname === 'google.com' && url.pathname === '/cast') {
+		const params = url.hash
+			.slice(1)
+			.split('/')
+			.map((pair) => pair.split('='))
+			.map(([key, value = '']) => [key, decodeURIComponent(value.replace(/\+/g, ' '))])
+		const appIds = params
+			.filter(([key]) => key === '__castAppId__')
+			.map(([, value]) => value.replace(/\(.*$/, '')) // strip "(capabilities)"
+			.filter(Boolean)
+		const clientId = params.find(([key]) => key === '__castClientId__')?.[1] || ''
+		return appIds.length ? { appIds, clientId } : null
+	}
+	return null
+}
 
+// Like Chrome, name Cast presentations after their Cast session: "cast-session_<sessionId>".
+// The receiver emulator uses the rest of the presentation ID as the session ID.
+const SESSION_ID_PREFIX = 'cast-session_'
+// The Cast SDK calls PresentationRequest#reconnect() with this ID to join an existing session.
+const AUTO_JOIN_ID = 'auto-join'
+
+const install = () => {
+	// document.currentScript is only set while this script runs, so read it right away.
 	const script = document.currentScript
 	const config = {
 		receiverUrl: script?.dataset.receiverUrl || null,
 		receivers: {},
 		...window.castEmulatorConfig
-	}
-
-	/**
-	 * Parse a Cast presentation URL, in either of the forms Chrome accepts:
-	 * - `cast:<appId>?clientId=...&autoJoinPolicy=...`
-	 * - `https://google.com/cast#__castAppId__=<appId>/__castClientId__=...` (legacy)
-	 * @returns {{appIds: string[], clientId: string} | null}
-	 */
-	const parseCastUrl = (presentationUrl) => {
-		const url = new URL(presentationUrl)
-		if (url.protocol === 'cast:') {
-			const appId = url.pathname
-			return appId ? { appIds: [appId], clientId: url.searchParams.get('clientId') || '' } : null
-		}
-		if (
-			/^https?:$/.test(url.protocol) &&
-			url.hostname === 'google.com' &&
-			url.pathname === '/cast'
-		) {
-			const params = url.hash
-				.slice(1)
-				.split('/')
-				.map((pair) => pair.split('='))
-				.map(([key, value = '']) => [key, decodeURIComponent(value.replace(/\+/g, ' '))])
-			const appIds = params
-				.filter(([key]) => key === '__castAppId__')
-				.map(([, value]) => value.replace(/\(.*$/, '')) // strip "(capabilities)"
-				.filter(Boolean)
-			const clientId = params.find(([key]) => key === '__castClientId__')?.[1] || ''
-			return appIds.length ? { appIds, clientId } : null
-		}
-		return null
 	}
 
 	window.presentationPolyfill.addUrlResolver((presentationUrl) => {
@@ -77,12 +73,6 @@
 		console.warn(LOG_PREFIX, 'no receiver page configured for app IDs', cast.appIds)
 		return null
 	})
-
-	// Like Chrome, name Cast presentations after their Cast session: "cast-session_<sessionId>".
-	// The receiver emulator uses the rest of the presentation ID as the session ID.
-	const SESSION_ID_PREFIX = 'cast-session_'
-	// The Cast SDK calls PresentationRequest#reconnect() with this ID to join an existing session.
-	const AUTO_JOIN_ID = 'auto-join'
 
 	window.presentationPolyfill.addPresentationIdGenerator((presentationUrl) =>
 		parseCastUrl(presentationUrl) ? SESSION_ID_PREFIX + crypto.randomUUID() : null
@@ -104,4 +94,10 @@
 	window.chrome = window.chrome || {}
 
 	window.castSenderEmulator = { parseCastUrl, config }
-})()
+}
+
+if (window.presentationPolyfill) {
+	install()
+} else {
+	console.error(LOG_PREFIX, 'presentation-polyfill.js must be loaded first')
+}

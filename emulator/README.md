@@ -155,8 +155,9 @@ volume.
 
 ## Development
 
-The scripts in [`src`](https://github.com/MattiasBuelens/chromecast-emulator/tree/main/emulator/src) are published as they are. `pnpm build` copies them to `dist/` and
-adds a minified version of each, and runs automatically before `npm publish`.
+The scripts in [`src`](https://github.com/MattiasBuelens/chromecast-emulator/tree/main/emulator/src) are ES modules. `pnpm build` bundles each one with
+[tsdown](https://tsdown.dev/) into a classic script in `dist/`, along with a minified version, and
+runs automatically before `npm publish`.
 
 ## Resources
 

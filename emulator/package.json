@@ -47,13 +47,13 @@
 	],
 	"sideEffects": true,
 	"scripts": {
-		"build": "node build.js",
-		"prepack": "node build.js"
-	},
-	"devDependencies": {
-		"esbuild": "^0.25.0"
+		"build": "tsdown",
+		"prepack": "tsdown"
 	},
 	"publishConfig": {
 		"access": "public"
+	},
+	"devDependencies": {
+		"tsdown": "^0.23.0"
 	}
 }
