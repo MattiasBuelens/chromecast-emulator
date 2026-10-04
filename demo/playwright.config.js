@@ -5,6 +5,11 @@ const PORT = 4173
 export default defineConfig({
 	testDir: './tests',
 	timeout: 60_000,
+	forbidOnly: !!process.env.CI,
+	retries: process.env.CI ? 2 : 0,
+	workers: process.env.CI ? 1 : undefined,
+	// In CI, write an HTML report to upload as a workflow artifact.
+	reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
 	use: {
 		baseURL: `http://localhost:${PORT}`,
 		trace: 'retain-on-failure',
