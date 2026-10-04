@@ -51,6 +51,8 @@ export const showPresentationDialog = (
 		style.textContent = STYLES
 		const dialog = document.createElement('dialog')
 		dialog.setAttribute('aria-labelledby', 'title')
+		// Like the browser's dialog, clicking outside of it closes it.
+		dialog.setAttribute('closedby', 'any')
 
 		const title = document.createElement('h2')
 		title.id = 'title'
@@ -86,16 +88,6 @@ export const showPresentationDialog = (
 		actions.append(cancel)
 		dialog.append(title, list, actions)
 
-		// Like the browser's dialog, clicking outside of it closes it.
-		dialog.addEventListener('click', (event) => {
-			const rect = dialog.getBoundingClientRect()
-			const inside =
-				event.clientX >= rect.left &&
-				event.clientX <= rect.right &&
-				event.clientY >= rect.top &&
-				event.clientY <= rect.bottom
-			if (!inside) dialog.close()
-		})
 		dialog.addEventListener('close', () => {
 			host.remove()
 			resolve(result)

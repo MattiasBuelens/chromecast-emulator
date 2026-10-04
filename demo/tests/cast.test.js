@@ -118,6 +118,12 @@ test('stops casting from the cast button', async ({ page: sender }) => {
 	const dialog = sender.getByRole('dialog', { name: 'Presenting' })
 	await expect(dialog).toBeVisible()
 
+	// Clicking outside the dialog closes it.
+	await sender.mouse.click(5, 5)
+	await expect(dialog).toBeHidden()
+	await sender.locator('#castbutton').click()
+	await expect(dialog).toBeVisible()
+
 	// Closing the dialog keeps casting.
 	await dialog.getByRole('button', { name: 'Close' }).click()
 	await expect(dialog).toBeHidden()
