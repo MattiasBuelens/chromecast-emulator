@@ -34,6 +34,14 @@ npm publish
 
 `prepack` builds `dist/` first, so the published package is always up to date with `src/`.
 
+## Acknowledgements
+
+- [jaclynonacloud/chromecast-emulator-demo](https://github.com/jaclynonacloud/chromecast-emulator-demo)
+  and the accompanying blog post
+  [Simplifying Chromecast emulation for developers](https://www.redspace.com/blog/simplifying-chromecast-emulation-for-developers),
+  whose emulator inspired this one.
+- The [Presentation API](https://www.w3.org/TR/presentation-api/), which makes this possible.
+
 ## License
 
 [MIT](./LICENSE), except for the demo sender in [`demo/sender`](./demo/sender), which is based on
