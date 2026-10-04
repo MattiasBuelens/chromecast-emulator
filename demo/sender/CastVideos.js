@@ -11,6 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// Modified for the Chromecast emulator demo: image URLs are resolved with
+// import.meta.url, so Vite bundles the images.
 
 'use strict';
 
@@ -814,9 +817,9 @@ CastPlayer.prototype.setupRemotePlayer = function () {
         // Display indicator if current time is close to the end of
         // the seekable range.
         if (this.liveSeekableRange && (Math.abs(media.getEstimatedTime() - this.liveSeekableRange.end) < LIVE_INDICATOR_BUFFER)) {
-          live_indicator.src = "imagefiles/live_indicator_active.png";
+          live_indicator.src = new URL("./imagefiles/live_indicator_active.png", import.meta.url).href;
         } else {
-          live_indicator.src = "imagefiles/live_indicator_inactive.png";
+          live_indicator.src = new URL("./imagefiles/live_indicator_inactive.png", import.meta.url).href;
         }
       } else {
         document.getElementById('live_indicator').style.display = 'none';
@@ -1352,7 +1355,7 @@ CastPlayer.prototype.enableProgressBar = function (enable) {
 
   if (enable) {
     // Enable UI
-    progress.style.backgroundImage = "url('./imagefiles/timeline_bg_progress.png')";
+    progress.style.backgroundImage = "url('" + new URL("./imagefiles/timeline_bg_progress.png", import.meta.url).href + "')";
     progress.style.cursor = "pointer";
     seekable_window.style.cursor = "pointer";
     progress_indicator.style.cursor = "pointer";
@@ -1364,7 +1367,7 @@ CastPlayer.prototype.enableProgressBar = function (enable) {
     progress_indicator.addEventListener('dragend', this.seekMediaListener);
   } else {
     // Disable UI
-    progress.style.backgroundImage = "url('./imagefiles/timeline_bg_buffer.png')";
+    progress.style.backgroundImage = "url('" + new URL("./imagefiles/timeline_bg_buffer.png", import.meta.url).href + "')";
     progress.style.cursor = "default";
     seekable_window.style.cursor = "default";
     progress_indicator.style.cursor = "default";

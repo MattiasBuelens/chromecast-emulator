@@ -12,6 +12,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// Modified for the Chromecast emulator demo: loads the Cast sender SDK
+// through load-cast-sdk.js, after the emulator scripts.
 -->
 
 <!DOCTYPE html>
@@ -89,7 +92,8 @@
   </div>
 
   <script src="CastVideos.js" type="module"></script>
-  <script type="text/javascript" src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+  <!-- Load the Chromecast emulator, then the Cast sender SDK. -->
+  <script src="load-cast-sdk.js" type="module"></script>
 </body>
 
 </html>

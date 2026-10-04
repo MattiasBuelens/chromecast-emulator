@@ -1,0 +1,8 @@
+/dist
+
+# Vite
+vite.config.js.timestamp-*
+
+# Playwright
+/test-results
+/playwright-report
