@@ -15,7 +15,6 @@
  * Presentation URLs that are not plain http(s) URLs (such as `cast:` URLs) can be
  * mapped to a page URL with `presentationPolyfill.addUrlResolver()`.
  */
-import type * as PresentationApi from './shared/presentation-api'
 import { defineEventHandlers, randomId } from './shared/utils'
 
 export interface KnownPresentation {
@@ -48,12 +47,27 @@ export interface PresentationPolyfill {
 	/** Whether this page was opened as a presentation, by a page that also uses the polyfill. */
 	isReceivingWindow: boolean
 	/** The browser's own `navigator.presentation`, if any. */
-	nativePresentation: PresentationApi.Presentation | undefined
+	nativePresentation: Presentation | undefined
+}
+
+export interface PresentationConnectionPolyfillInfo {
+	/** Whether the controlling page reconnected to the presentation, rather than starting it. */
+	readonly reconnect: boolean
+	/** The user agent of the controlling page. */
+	readonly userAgent: string
 }
 
 declare global {
 	interface Window {
 		presentationPolyfill?: PresentationPolyfill
+	}
+
+	interface PresentationConnection {
+		/**
+		 * Not part of the spec: lets receiver-side code tell new sessions from reconnects.
+		 * Only set on the receiving side.
+		 */
+		readonly polyfillInfo?: PresentationConnectionPolyfillInfo
 	}
 }
 
@@ -93,7 +107,7 @@ type MessagePayload<T extends MessageType> = Omit<Extract<PolyfillMessage, { typ
 type PostedMessage = { [MESSAGE_KEY]: MessageType } & Partial<Record<string, unknown>>
 
 type MessageData = string | Blob | ArrayBuffer
-type CloseReason = PresentationApi.PresentationConnectionCloseReason
+type CloseReason = PresentationConnectionCloseReason
 
 // ----------- Helpers
 
@@ -143,7 +157,7 @@ const resolvePageUrl = (presentationUrl: string): string | null => {
 
 class PresentationConnectionAvailableEvent
 	extends Event
-	implements PresentationApi.PresentationConnectionAvailableEvent
+	implements globalThis.PresentationConnectionAvailableEvent
 {
 	readonly connection: PresentationConnection
 
@@ -155,7 +169,7 @@ class PresentationConnectionAvailableEvent
 
 class PresentationConnectionCloseEvent
 	extends Event
-	implements PresentationApi.PresentationConnectionCloseEvent
+	implements globalThis.PresentationConnectionCloseEvent
 {
 	readonly reason: CloseReason
 	readonly message: string
@@ -178,16 +192,16 @@ interface Transport {
 
 const transportKey = Symbol('transport')
 
-class PresentationConnection extends EventTarget implements PresentationApi.PresentationConnection {
+class PresentationConnection extends EventTarget implements globalThis.PresentationConnection {
 	readonly id: string
 	readonly url: string
-	state: PresentationApi.PresentationConnectionState = 'connecting'
+	state: PresentationConnectionState = 'connecting'
 	binaryType: BinaryType = 'arraybuffer'
-	declare readonly polyfillInfo?: PresentationApi.PresentationConnectionPolyfillInfo
-	declare onconnect: PresentationApi.PresentationConnection['onconnect']
-	declare onclose: PresentationApi.PresentationConnection['onclose']
-	declare onterminate: PresentationApi.PresentationConnection['onterminate']
-	declare onmessage: PresentationApi.PresentationConnection['onmessage']
+	declare readonly polyfillInfo?: PresentationConnectionPolyfillInfo
+	declare onconnect: globalThis.PresentationConnection['onconnect']
+	declare onclose: globalThis.PresentationConnection['onclose']
+	declare onterminate: globalThis.PresentationConnection['onterminate']
+	declare onmessage: globalThis.PresentationConnection['onmessage']
 	private readonly [transportKey]: Transport
 
 	constructor(id: string, url: string, transport: Transport) {
@@ -409,12 +423,9 @@ const listenToReceivers = () => {
 	})
 }
 
-class PresentationAvailability
-	extends EventTarget
-	implements PresentationApi.PresentationAvailability
-{
+class PresentationAvailability extends EventTarget implements globalThis.PresentationAvailability {
 	readonly value: boolean
-	declare onchange: PresentationApi.PresentationAvailability['onchange']
+	declare onchange: globalThis.PresentationAvailability['onchange']
 
 	constructor(value: boolean) {
 		super()
@@ -426,9 +437,9 @@ defineEventHandlers(PresentationAvailability.prototype, ['change'])
 // Like the spec says, only one start() may be in progress at a time, across all requests.
 let startInProgress = false
 
-class PresentationRequest extends EventTarget implements PresentationApi.PresentationRequest {
+class PresentationRequest extends EventTarget implements globalThis.PresentationRequest {
 	readonly urls: readonly string[]
-	declare onconnectionavailable: PresentationApi.PresentationRequest['onconnectionavailable']
+	declare onconnectionavailable: globalThis.PresentationRequest['onconnectionavailable']
 	private availability: Promise<PresentationAvailability> | undefined
 
 	constructor(urls: string | string[]) {
@@ -558,11 +569,11 @@ defineEventHandlers(PresentationRequest.prototype, ['connectionavailable'])
 
 class PresentationConnectionList
 	extends EventTarget
-	implements PresentationApi.PresentationConnectionList
+	implements globalThis.PresentationConnectionList
 {
 	/** @internal Every connection this receiver accepted, including closed ones. */
 	readonly _connections: PresentationConnection[] = []
-	declare onconnectionavailable: PresentationApi.PresentationConnectionList['onconnectionavailable']
+	declare onconnectionavailable: globalThis.PresentationConnectionList['onconnectionavailable']
 
 	get connections() {
 		return this._connections.filter((c) => c.state === 'connected' || c.state === 'connecting')
@@ -570,7 +581,7 @@ class PresentationConnectionList
 }
 defineEventHandlers(PresentationConnectionList.prototype, ['connectionavailable'])
 
-class PresentationReceiver implements PresentationApi.PresentationReceiver {
+class PresentationReceiver implements globalThis.PresentationReceiver {
 	/** @internal Resolves `connectionList`, once the first connection comes in. */
 	_resolveList!: (list: PresentationConnectionList) => void
 	private readonly listReady = new Promise<PresentationConnectionList>(
@@ -671,7 +682,7 @@ const install = () => {
 	const isReceivingWindow = window.name.startsWith(WINDOW_NAME_PREFIX) && !!window.opener
 
 	let defaultRequest: PresentationRequest | null = null
-	const presentation: PresentationApi.Presentation = {
+	const presentation: Presentation = {
 		get defaultRequest() {
 			return defaultRequest
 		},

@@ -8,7 +8,8 @@
 		"noEmit": true,
 		"isolatedModules": true,
 		"verbatimModuleSyntax": true,
-		"skipLibCheck": true
+		"skipLibCheck": true,
+		"libReplacement": true
 	},
 	"include": ["src", "tsdown.config.ts"]
 }

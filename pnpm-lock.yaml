@@ -27,6 +27,9 @@ importers:
 
   emulator:
     devDependencies:
+      '@typescript/lib-dom':
+        specifier: npm:modern-web-types@^0.6.0
+        version: modern-web-types@0.6.0
       tsdown:
         specifier: ^0.23.0
         version: 0.23.0(typescript@7.0.2)
@@ -531,6 +534,9 @@ packages:
     resolution: {integrity: sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==}
     engines: {node: '>= 12.0.0'}
 
+  modern-web-types@0.6.0:
+    resolution: {integrity: sha512-Z7y78zQFVGK8s+RAZn4pHxJ/iA3rdHnA31cASEC8P0oCcDtefSbFbQqFsKHgLxI0xrodl6l60/LkialEIHxWmw==}
+
   nanoid@3.3.19:
     resolution: {integrity: sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -986,6 +992,8 @@ snapshots:
       lightningcss-linux-x64-musl: 1.33.0
       lightningcss-win32-arm64-msvc: 1.33.0
       lightningcss-win32-x64-msvc: 1.33.0
+
+  modern-web-types@0.6.0: {}
 
   nanoid@3.3.19: {}
 

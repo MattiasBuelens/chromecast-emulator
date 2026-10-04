@@ -24,7 +24,6 @@
  * every message is also logged with console.debug() (shown with the "Verbose" log level).
  */
 import { parseCastUrl, SESSION_ID_PREFIX } from './shared/cast-url'
-import type { PresentationConnection } from './shared/presentation-api'
 import { defineEventHandlers, randomId } from './shared/utils'
 
 interface CastPlatform {
