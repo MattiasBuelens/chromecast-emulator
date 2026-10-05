@@ -53,8 +53,21 @@ jobs:
           package-manager-cache: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # Dry-run the version bump to put the new version in the release PR's title.
+      - name: Get next version
+        id: next-version
+        run: |
+          pnpm changeset version
+          echo "version=$(node -p 'require("./emulator/package.json").version')" >> "$GITHUB_OUTPUT"
+          git reset --hard
+          git clean -fd
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Version packages
         uses: changesets/action/version@v2
+        with:
+          pr-title: Release v${{ steps.next-version.outputs.version }}
+          commit-message: Release v${{ steps.next-version.outputs.version }}
 
   # No pending changesets but unpublished versions: build and pack them...
   pack:
