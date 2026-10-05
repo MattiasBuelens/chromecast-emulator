@@ -77,6 +77,25 @@ While casting, clicking the cast button again shows a small dialog in the sender
 running session, like Chrome's Cast dialog. Click **Stop** there to stop casting, which closes the
 receiver window.
 
+### Picture-in-Picture mode
+
+Instead of a popup window, the receiver can open in a
+[Document Picture-in-Picture](https://developer.mozilla.org/en-US/docs/Web/API/Document_Picture-in-Picture_API)
+window, which stays on top of the sender page, like a small TV. The receiver page runs in an iframe
+inside that window, at the same 1280×720 size as in a popup, scaled down to fit. Pick the mode with
+`data-mode` on the polyfill script:
+
+```html
+<script src="/presentation-polyfill.js" data-mode="pip"></script>
+```
+
+Or switch at any time with `presentationPolyfill.mode = 'pip'` (or `'popup'`); the next cast
+uses the new mode. `presentationPolyfill.pipSupported` tells whether the browser supports it.
+Browsers without Document Picture-in-Picture fall back to a popup.
+
+Since the receiver page runs in an iframe, it must allow being framed by the sender's origin
+(no `X-Frame-Options: DENY` or restrictive `frame-ancestors`).
+
 ### Receiver
 
 Load the polyfill and the receiver emulator **before** the Cast Web Receiver SDK:
@@ -128,6 +147,8 @@ the emulated platform, and the messages to and from the sender. They are also lo
 
 The emulator works in browsers driven by test frameworks such as [Playwright](https://playwright.dev/):
 `page` is your sender, and the receiver is the popup it opens (`page.waitForEvent('popup')`).
+In Picture-in-Picture mode, Playwright also reports the Picture-in-Picture window as a popup, and
+the receiver is the frame inside it.
 Use `context.route()` rather than `page.route()`, so routes also cover the popup. Launch Chromium
 with `--autoplay-policy=no-user-gesture-required`, so the receiver plays media without a click.
 See the demo's [test](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/demo/tests/cast.test.js) for a complete example.
@@ -155,7 +176,8 @@ volume.
 - Only the sender page that opened the receiver window (and that page after a reload) can join
   its session. Other tabs and other browsers can't.
 - While the receiver window covers the sender window, Chrome considers the sender page hidden and
-  throttles its timers.
+  throttles its timers. The [Picture-in-Picture mode](#picture-in-picture-mode) mostly avoids this,
+  since its small window leaves most of the sender page uncovered.
 
 ## Development
 

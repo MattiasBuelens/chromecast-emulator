@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 
 /** @typedef {import('@playwright/test').Page} Page */
+/** @typedef {import('@playwright/test').Frame} Frame */
 
 // The sender loads its media and images from here. The tests serve their own media instead, so
 // they don't depend on (or download) real content.
@@ -13,7 +14,7 @@ const MEDIA_FILE = new URL('./fixtures/test-video.webm', import.meta.url)
 
 /**
  * The state of the `<video>` that `<cast-media-player>` plays media in.
- * @param {Page} receiver
+ * @param {Frame} receiver
  */
 const getReceiverVideo = (receiver) =>
 	receiver.evaluate(() => {
@@ -52,96 +53,129 @@ test.beforeEach(async ({ context }) => {
 	)
 })
 
-test('casts and controls media from the sender to the receiver', async ({ page: sender }) => {
-	await sender.goto('/sender/')
-
-	// Cast: the emulator opens the receiver page in a popup.
+/**
+ * Open the sender page, and cast from it with the cast button.
+ *
+ * In "popup" mode, the emulator opens the receiver page in a popup. In "pip" mode, it opens a
+ * Picture-in-Picture window (which Playwright also reports as a popup) with the receiver page
+ * in an iframe.
+ *
+ * @param {Page} sender
+ * @param {'popup' | 'pip'} mode
+ * @returns {Promise<{ receiver: Frame, receiverWindow: Page }>}
+ */
+const castFromSender = async (sender, mode) => {
+	await sender.goto(`/sender/?mode=${mode}`)
 	// Wait for the Cast SDK to find the (emulated) receiver, before clicking the cast button.
 	await sender.waitForFunction(
 		() => window.cast?.framework?.CastContext.getInstance().getCastState() === 'NOT_CONNECTED'
 	)
-	const [receiver] = await Promise.all([
+	const [receiverWindow] = await Promise.all([
 		sender.waitForEvent('popup'),
 		sender.locator('#castbutton').click()
 	])
-	await expect(receiver).toHaveURL(/\/receiver\/$/)
-	await expect(receiver.locator('cast-media-player')).toBeAttached()
-	await expect
-		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
-		.toBe('SESSION_STARTED')
+	/** @type {Frame | undefined} */
+	let receiver
+	if (mode === 'pip') {
+		await expect
+			.poll(
+				() => (receiver = receiverWindow.frames().find((f) => f !== receiverWindow.mainFrame()))
+			)
+			.toBeTruthy()
+	} else {
+		receiver = receiverWindow.mainFrame()
+	}
+	await expect.poll(() => receiver?.url()).toMatch(/\/receiver\/$/)
+	return { receiver: /** @type {Frame} */ (receiver), receiverWindow }
+}
 
-	// Pick the first video from the carousel. The sender loads it on the receiver.
-	await sender.locator('#thumb0Div').click()
+for (const mode of /** @type {const} */ (['popup', 'pip'])) {
+	test.describe(`${mode} mode`, () => {
+		test('casts and controls media from the sender to the receiver', async ({ page: sender }) => {
+			// Cast: the emulator opens the receiver page.
+			const { receiver, receiverWindow } = await castFromSender(sender, mode)
+			await expect(receiver.locator('cast-media-player')).toBeAttached()
+			await expect
+				.poll(() =>
+					sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
+				)
+				.toBe('SESSION_STARTED')
 
-	// The receiver plays it...
-	await expect
-		.poll(() => getReceiverVideo(receiver))
-		.toMatchObject({ src: MEDIA_URL, paused: false })
-	await expect.poll(async () => (await getReceiverVideo(receiver))?.currentTime).toBeGreaterThan(1)
-	// ...and the sender sees it playing.
-	await expect
-		.poll(() => getSenderPlayer(sender))
-		.toEqual({ sessionState: 'SESSION_STARTED', contentId: MEDIA_URL, playerState: 'PLAYING' })
-	await expect(sender.locator('#playerstate')).toHaveText(/Big Buck Bunny/)
+			// Pick the first video from the carousel. The sender loads it on the receiver.
+			await sender.locator('#thumb0Div').click()
 
-	// Pause from the sender's media controls.
-	await sender.locator('#pause').click()
-	await expect.poll(async () => (await getReceiverVideo(receiver))?.paused).toBe(true)
-	await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PAUSED')
+			// The receiver plays it...
+			await expect
+				.poll(() => getReceiverVideo(receiver))
+				.toMatchObject({ src: MEDIA_URL, paused: false })
+			await expect
+				.poll(async () => (await getReceiverVideo(receiver))?.currentTime)
+				.toBeGreaterThan(1)
+			// ...and the sender sees it playing.
+			await expect
+				.poll(() => getSenderPlayer(sender))
+				.toEqual({ sessionState: 'SESSION_STARTED', contentId: MEDIA_URL, playerState: 'PLAYING' })
+			await expect(sender.locator('#playerstate')).toHaveText(/Big Buck Bunny/)
 
-	// Stop casting: the receiver closes its window.
-	await sender.evaluate(() => cast.framework.CastContext.getInstance().endCurrentSession(true))
-	await expect.poll(() => receiver.isClosed()).toBe(true)
-	await expect
-		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
-		.toBe('SESSION_ENDED')
-})
+			// Pause from the sender's media controls.
+			await sender.locator('#pause').click()
+			await expect.poll(async () => (await getReceiverVideo(receiver))?.paused).toBe(true)
+			await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PAUSED')
 
-test('stops casting from the cast button', async ({ page: sender }) => {
-	await sender.goto('/sender/')
-	await sender.waitForFunction(
-		() => window.cast?.framework?.CastContext.getInstance().getCastState() === 'NOT_CONNECTED'
-	)
-	const [receiver] = await Promise.all([
-		sender.waitForEvent('popup'),
-		sender.locator('#castbutton').click()
-	])
-	await expect(receiver.locator('cast-media-player')).toBeAttached()
-	await expect
-		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
-		.toBe('SESSION_STARTED')
+			// Stop casting: the receiver closes its window.
+			await sender.evaluate(() => cast.framework.CastContext.getInstance().endCurrentSession(true))
+			await expect.poll(() => receiverWindow.isClosed()).toBe(true)
+			await expect
+				.poll(() =>
+					sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
+				)
+				.toBe('SESSION_ENDED')
+		})
 
-	// While casting, the cast button shows the running session instead of starting another one.
-	let popups = 0
-	sender.on('popup', () => popups++)
-	await sender.locator('#castbutton').click()
-	const dialog = sender.getByRole('dialog', { name: 'Presenting' })
-	await expect(dialog).toBeVisible()
+		test('stops casting from the cast button', async ({ page: sender }) => {
+			const { receiver, receiverWindow } = await castFromSender(sender, mode)
+			await expect(receiver.locator('cast-media-player')).toBeAttached()
+			await expect
+				.poll(() =>
+					sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
+				)
+				.toBe('SESSION_STARTED')
 
-	// Clicking outside the dialog closes it.
-	await sender.mouse.click(5, 5)
-	await expect(dialog).toBeHidden()
-	await sender.locator('#castbutton').click()
-	await expect(dialog).toBeVisible()
+			// While casting, the cast button shows the running session instead of starting another one.
+			let popups = 0
+			sender.on('popup', () => popups++)
+			await sender.locator('#castbutton').click()
+			const dialog = sender.getByRole('dialog', { name: 'Presenting' })
+			await expect(dialog).toBeVisible()
 
-	// Closing the dialog keeps casting.
-	await dialog.getByRole('button', { name: 'Close' }).click()
-	await expect(dialog).toBeHidden()
-	expect(receiver.isClosed()).toBe(false)
-	expect(
-		await sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
-	).toBe('SESSION_STARTED')
+			// Clicking outside the dialog closes it.
+			await sender.mouse.click(5, 5)
+			await expect(dialog).toBeHidden()
+			await sender.locator('#castbutton').click()
+			await expect(dialog).toBeVisible()
 
-	// Stop casting: the receiver closes its window.
-	await sender.locator('#castbutton').click()
-	await dialog.getByRole('button', { name: 'Stop' }).click()
-	await expect(dialog).toBeHidden()
-	await expect.poll(() => receiver.isClosed()).toBe(true)
-	await expect
-		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
-		.toBe('SESSION_ENDED')
-	await expect
-		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getCastState()))
-		.toBe('NOT_CONNECTED')
-	expect(popups).toBe(0)
-})
+			// Closing the dialog keeps casting.
+			await dialog.getByRole('button', { name: 'Close' }).click()
+			await expect(dialog).toBeHidden()
+			expect(receiverWindow.isClosed()).toBe(false)
+			expect(
+				await sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
+			).toBe('SESSION_STARTED')
+
+			// Stop casting: the receiver closes its window.
+			await sender.locator('#castbutton').click()
+			await dialog.getByRole('button', { name: 'Stop' }).click()
+			await expect(dialog).toBeHidden()
+			await expect.poll(() => receiverWindow.isClosed()).toBe(true)
+			await expect
+				.poll(() =>
+					sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
+				)
+				.toBe('SESSION_ENDED')
+			await expect
+				.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getCastState()))
+				.toBe('NOT_CONNECTED')
+			expect(popups).toBe(0)
+		})
+	})
+}

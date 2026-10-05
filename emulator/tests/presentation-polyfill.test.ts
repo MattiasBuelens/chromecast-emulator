@@ -58,6 +58,14 @@ const FILES: Record<string, { body: string | Promise<Buffer>; contentType: strin
 	'/controller.html': { body: html('<title>Controller</title>'), contentType: 'text/html' },
 	'/receiver.html': { body: html('<title>Receiver</title>'), contentType: 'text/html' },
 	'/other-receiver.html': { body: html('<title>Other receiver</title>'), contentType: 'text/html' },
+	// Starts presentations in a Picture-in-Picture window.
+	'/controller-pip.html': {
+		body:
+			`<!doctype html><meta charset="utf-8">` +
+			`<script src="/presentation-polyfill.js" data-mode="pip"></script>` +
+			`<script src="/helpers.js"></script><title>Controller</title>`,
+		contentType: 'text/html'
+	},
 	// A page that never accepts the presentation, because it doesn't load the polyfill.
 	'/blank.html': { body: '<!doctype html><title>Blank</title>', contentType: 'text/html' },
 	// Calls start() without a user gesture.
@@ -731,5 +739,100 @@ test('navigator.presentation.receiver', async ({ controller }) => {
 		isConnection: true,
 		url: true,
 		defaultRequest: null
+	})
+})
+
+test.describe('pip mode', () => {
+	/**
+	 * Start a presentation in a Picture-in-Picture window (which Playwright reports as a popup), and
+	 * return that window and the receiving page in its iframe.
+	 */
+	const startPipPresentation = async (controller: Page) => {
+		await controller.evaluate(() => (window.presentationPolyfill!.mode = 'pip'))
+		const pipWindow = await startPresentation(controller)
+		const receiver = pipWindow.frames().find((frame) => frame !== pipWindow.mainFrame())!
+		return { pipWindow, receiver }
+	}
+
+	test('defaults to the data-mode of the script', async ({ controller }) => {
+		expect(
+			await controller.evaluate(() => ({
+				mode: window.presentationPolyfill!.mode,
+				pipSupported: window.presentationPolyfill!.pipSupported
+			}))
+		).toEqual({ mode: 'popup', pipSupported: true })
+		await controller.goto(`${ORIGIN}/controller-pip.html`)
+		expect(await controller.evaluate(() => window.presentationPolyfill!.mode)).toBe('pip')
+		expect(
+			await controller.evaluate(() =>
+				window.errorName(() => (window.presentationPolyfill!.mode = 'fullscreen' as 'pip'))
+			)
+		).toBe('TypeError')
+	})
+
+	test('opens the receiving page in an iframe in a Picture-in-Picture window', async ({
+		controller
+	}) => {
+		const { pipWindow, receiver } = await startPipPresentation(controller)
+		expect(pipWindow.url()).toBe('about:blank')
+		expect(receiver.url()).toBe(RECEIVER_URL)
+		expect(await controller.evaluate(() => window.connection.state)).toBe('connected')
+		expect(await getReceiverConnection(receiver)).toEqual({ count: 1, state: 'connected' })
+
+		// Messages go both ways.
+		await receiver.evaluate(() => (window.messages = window.collectMessages(window.connection)))
+		await controller.evaluate(() => {
+			window.messages = window.collectMessages(window.connection)
+			window.connection.send('to receiver')
+		})
+		await receiver.evaluate(() => window.connection.send('to controller'))
+		await expect
+			.poll(() => receiver.evaluate(() => window.messages))
+			.toEqual([{ type: 'text', data: 'to receiver' }])
+		await expect
+			.poll(() => controller.evaluate(() => window.messages))
+			.toEqual([{ type: 'text', data: 'to controller' }])
+	})
+
+	test('closes the Picture-in-Picture window when the controller terminates', async ({
+		controller
+	}) => {
+		const { pipWindow } = await startPipPresentation(controller)
+		await Promise.all([
+			pipWindow.waitForEvent('close'),
+			controller.evaluate(() => window.connection.terminate())
+		])
+	})
+
+	test('closes the Picture-in-Picture window when the receiver terminates', async ({
+		controller
+	}) => {
+		const { pipWindow, receiver } = await startPipPresentation(controller)
+		await getReceiverConnection(receiver)
+		await controller.evaluate(() => {
+			window.result = window.nextEvent(window.connection, 'terminate').then(window.describeEvent)
+		})
+		await Promise.all([
+			pipWindow.waitForEvent('close'),
+			receiver.evaluate(() => window.connection.terminate())
+		])
+		expect(await controller.evaluate(() => window.result)).toMatchObject({
+			type: 'terminate',
+			state: 'terminated'
+		})
+	})
+
+	test('terminates the presentation when the Picture-in-Picture window closes', async ({
+		controller
+	}) => {
+		const { pipWindow } = await startPipPresentation(controller)
+		await controller.evaluate(() => {
+			window.result = window.nextEvent(window.connection, 'terminate').then(window.describeEvent)
+		})
+		await pipWindow.close()
+		expect(await controller.evaluate(() => window.result)).toMatchObject({
+			type: 'terminate',
+			state: 'terminated'
+		})
 	})
 })
