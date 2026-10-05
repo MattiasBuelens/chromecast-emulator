@@ -14,7 +14,8 @@
 // limitations under the License.
 //
 // Modified for the Chromecast emulator demo: loads the Cast sender SDK
-// through load-cast-sdk.js, after the emulator scripts.
+// through load-cast-sdk.js, after the emulator scripts, and adds a picker
+// for where the emulator opens the receiver.
 -->
 
 <!DOCTYPE html>
@@ -34,6 +35,14 @@
 <body>
   <div id="top_header">
     <div id="logo"></div>
+    <!-- Not part of CastVideos-chrome: where the emulator opens the receiver. -->
+    <label id="receiver_mode" style="float: right; margin: 24px 16px; color: #fff; font-size: 14px">
+      Open receiver in
+      <select>
+        <option value="popup">a popup window</option>
+        <option value="pip">a Picture-in-Picture window</option>
+      </select>
+    </label>
   </div>
   <div id="main_video">
     <div class="imageSub">

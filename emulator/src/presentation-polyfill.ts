@@ -12,6 +12,12 @@
  * - Receiving page (the popup): `navigator.presentation.receiver.connectionList`
  *   resolves with the incoming connections from the opener window.
  *
+ * In "pip" mode, the controlling page opens the URL in an iframe inside a Document
+ * Picture-in-Picture window instead (https://wicg.github.io/document-picture-in-picture/),
+ * which stays on top of the controlling page. Pick the mode with `data-mode="popup|pip"` on
+ * this script, or change `presentationPolyfill.mode` at any time. Browsers without Document
+ * Picture-in-Picture fall back to a popup.
+ *
  * Presentation URLs that are not plain http(s) URLs (such as `cast:` URLs) can be
  * mapped to a page URL with `presentationPolyfill.addUrlResolver()`.
  */
@@ -23,7 +29,23 @@ export interface KnownPresentation {
 	url: string | null
 }
 
+/**
+ * How the controlling page shows a presentation:
+ *
+ * - `popup`: in a popup window.
+ * - `pip`: in an iframe inside a Document Picture-in-Picture window.
+ */
+export type PresentationMode = 'popup' | 'pip'
+
 export interface PresentationPolyfill {
+	/**
+	 * How `PresentationRequest#start()` shows new presentations. Defaults to the `data-mode` of
+	 * this script, or `popup`. In `pip` mode, browsers without Document Picture-in-Picture fall back
+	 * to a popup.
+	 */
+	mode: PresentationMode
+	/** Whether this browser supports the `pip` mode. */
+	readonly pipSupported: boolean
 	/**
 	 * Register a function that maps a presentation URL to the URL of the page to open
 	 * for it, or returns null when it does not handle that URL.
@@ -78,12 +100,18 @@ const MESSAGE_KEY = '__presentationPolyfill'
 // The name survives reloads, so the receiving page can always tell it is a presentation.
 const WINDOW_NAME_PREFIX = '__presentation__:'
 const WINDOW_FEATURES = 'popup,width=1280,height=720'
+// In "pip" mode, the receiving page gets the same viewport as a popup, scaled down to fit the
+// (smaller) Picture-in-Picture window.
+const RECEIVER_WIDTH = 1280
+const RECEIVER_HEIGHT = 720
+const PIP_WINDOW_SIZE = { width: 640, height: 360 }
 const CLOSED_WINDOW_POLL_MS = 500
 const RECEIVER_HEARTBEAT_MS = 1000
 const RECEIVER_DISCOVERY_TIMEOUT_MS = 2 * RECEIVER_HEARTBEAT_MS + 500
 const LOG_PREFIX = '[presentation-polyfill]'
 
 const NativePresentation = navigator.presentation
+const PIP_SUPPORTED = 'documentPictureInPicture' in window
 
 /** The messages that the controlling and receiving windows exchange. */
 type PolyfillMessage =
@@ -100,7 +128,7 @@ type PolyfillMessage =
 	| { type: 'message'; connectionId: string; data: MessageData }
 	| { type: 'close'; connectionId: string; reason: CloseReason; message: string }
 	| { type: 'terminate'; connectionId: string }
-	| { type: 'terminated' }
+	| { type: 'terminated'; closeWindow?: boolean }
 
 type MessageType = PolyfillMessage['type']
 type MessagePayload<T extends MessageType> = Omit<Extract<PolyfillMessage, { type: T }>, 'type'>
@@ -316,6 +344,15 @@ interface ControlledPresentation {
 /** Presentations started (or rediscovered) by this page, by presentation ID. */
 const presentations = new Map<string, ControlledPresentation>()
 
+/**
+ * The Picture-in-Picture window around each receiving window (an iframe) that this page opened.
+ * Closing a presentation closes that window, rather than the receiving window itself.
+ */
+const pipWindows = new WeakMap<Window, Window>()
+
+/** Close a presentation's receiving window, or the Picture-in-Picture window around it. */
+const closeReceivingWindow = (win: Window) => (pipWindows.get(win) || win).close()
+
 const getOrCreatePresentation = (
 	id: string,
 	url: string | null,
@@ -362,7 +399,7 @@ const terminatePresentation = (presentation: ControlledPresentation) => {
 /** Terminate a presentation from the controlling side: close its window and tell everyone. */
 const stopPresentation = (presentation: ControlledPresentation, connectionId = '') => {
 	post(presentation.window, 'terminate', { connectionId })
-	presentation.window.close()
+	closeReceivingWindow(presentation.window)
 	terminatePresentation(presentation)
 }
 
@@ -462,6 +499,10 @@ const listenToReceivers = () => {
 				break
 			case 'terminated':
 				terminatePresentation(presentation)
+				// A receiver in an iframe can't close its Picture-in-Picture window by itself.
+				if (message.closeWindow && pipWindows.has(presentation.window)) {
+					queueTask(() => closeReceivingWindow(presentation.window))
+				}
 				break
 		}
 	})
@@ -477,6 +518,47 @@ const listenToReceivers = () => {
 	})
 }
 
+/**
+ * Show the receiving page in an iframe inside a Picture-in-Picture window, and return the iframe's
+ * window. The Picture-in-Picture window has no URL of its own, so it can't load the page itself.
+ */
+const openInPictureInPicture = (pipWindow: Window, pageUrl: string, name: string): Window => {
+	const doc = pipWindow.document
+	const style = doc.createElement('style')
+	style.textContent = `
+		html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+		iframe {
+			position: absolute;
+			left: 50%;
+			top: 50%;
+			width: ${RECEIVER_WIDTH}px;
+			height: ${RECEIVER_HEIGHT}px;
+			border: none;
+			transform: translate(-50%, -50%) scale(var(--scale, 1));
+		}
+	`
+	const iframe = doc.createElement('iframe')
+	// The receiving page reads the presentation ID from its name, like in a popup.
+	iframe.name = name
+	iframe.allow = 'autoplay; fullscreen; encrypted-media'
+	iframe.src = pageUrl
+	const fit = () => {
+		const scale = Math.min(
+			pipWindow.innerWidth / RECEIVER_WIDTH,
+			pipWindow.innerHeight / RECEIVER_HEIGHT
+		)
+		iframe.style.setProperty('--scale', String(scale))
+	}
+	pipWindow.addEventListener('resize', fit)
+	fit()
+	doc.title = 'Presentation'
+	doc.head.append(style)
+	doc.body.append(iframe)
+	const win = iframe.contentWindow!
+	pipWindows.set(win, pipWindow)
+	return win
+}
+
 class PresentationAvailability extends EventTarget implements globalThis.PresentationAvailability {
 	readonly value: boolean
 	declare onchange: globalThis.PresentationAvailability['onchange']
@@ -487,6 +569,10 @@ class PresentationAvailability extends EventTarget implements globalThis.Present
 	}
 }
 defineEventHandlers(PresentationAvailability.prototype, ['change'])
+
+// document.currentScript is only set while this script runs, so read it right away.
+let mode: PresentationMode =
+	(document.currentScript as HTMLScriptElement | null)?.dataset.mode === 'pip' ? 'pip' : 'popup'
 
 // Like the spec says, only one start() may be in progress at a time, across all requests.
 let startInProgress = false
@@ -559,17 +645,42 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 		if (live.length > 0) return this._showDialog(live)
 		// Open the window synchronously, so it still counts as part of the user gesture.
 		const presentationId = createPresentationId(selected.url)
-		const win = window.open(selected.pageUrl, WINDOW_NAME_PREFIX + presentationId, WINDOW_FEATURES)
-		if (!win) {
-			return Promise.reject(
-				domException('NotAllowedError', 'Could not open the presentation window (pop-up blocked?)')
+		const windowName = WINDOW_NAME_PREFIX + presentationId
+		let opened: Promise<Window>
+		if (mode === 'pip' && PIP_SUPPORTED) {
+			opened = window.documentPictureInPicture.requestWindow(PIP_WINDOW_SIZE).then(
+				(pipWindow) => openInPictureInPicture(pipWindow, selected.pageUrl, windowName),
+				(error) => {
+					throw domException(
+						'NotAllowedError',
+						`Could not open the Picture-in-Picture window: ${error?.message || error}`
+					)
+				}
 			)
+		} else {
+			if (mode === 'pip') {
+				console.warn(LOG_PREFIX, 'Document Picture-in-Picture is not supported, using a popup')
+			}
+			const win = window.open(selected.pageUrl, windowName, WINDOW_FEATURES)
+			if (!win) {
+				return Promise.reject(
+					domException(
+						'NotAllowedError',
+						'Could not open the presentation window (pop-up blocked?)'
+					)
+				)
+			}
+			opened = Promise.resolve(win)
 		}
-		const presentation = getOrCreatePresentation(presentationId, selected.url, win)
-		presentation.started = true
 		startInProgress = true
-		return whenReceiverReady(presentation)
-			.then(() => this._connect(presentation, selected.url, { reconnect: false }))
+		return opened
+			.then((win) => {
+				const presentation = getOrCreatePresentation(presentationId, selected.url, win)
+				presentation.started = true
+				return whenReceiverReady(presentation).then(() =>
+					this._connect(presentation, selected.url, { reconnect: false })
+				)
+			})
 			.finally(() => (startInProgress = false))
 	}
 
@@ -708,15 +819,26 @@ class PresentationReceiver implements globalThis.PresentationReceiver {
 	}
 }
 
-const createReceiver = () => {
+/**
+ * The controlling window of this receiving window: its opener for a popup, or the opener of the
+ * Picture-in-Picture window that this receiving window is an iframe in.
+ */
+const findController = (): Window | null => {
+	if (!window.name.startsWith(WINDOW_NAME_PREFIX)) return null
+	if (window.opener) return window.opener
+	// `top` and `opener` are readable even when the Picture-in-Picture window is cross-origin.
+	if (window.parent !== window && window.parent === window.top) return window.top.opener
+	return null
+}
+
+const createReceiver = (controller: Window) => {
 	const presentationId = window.name.slice(WINDOW_NAME_PREFIX.length)
-	const controller: Window = window.opener
 	const list = new PresentationConnectionList()
 	const receiver = new PresentationReceiver()
 	const connections = new Map<string, PresentationConnection>()
 	let presentationUrl: string | null = null
 
-	const sendTerminated = () => post(controller, 'terminated', {})
+	const sendTerminated = (closeWindow = false) => post(controller, 'terminated', { closeWindow })
 
 	window.addEventListener('message', (event) => {
 		const message = readMessage(event.data)
@@ -743,7 +865,7 @@ const createReceiver = () => {
 					},
 					terminate() {
 						for (const c of connections.values()) _terminated(c)
-						sendTerminated()
+						sendTerminated(true)
 						// Close the window after the terminate events.
 						queueTask(() => window.close())
 					}
@@ -791,7 +913,7 @@ const createReceiver = () => {
 	setInterval(() => {
 		if (!controller.closed) hello('receiver-alive')
 	}, RECEIVER_HEARTBEAT_MS)
-	window.addEventListener('pagehide', sendTerminated)
+	window.addEventListener('pagehide', () => sendTerminated())
 
 	return receiver
 }
@@ -801,7 +923,8 @@ const createReceiver = () => {
 const install = () => {
 	listenToReceivers()
 
-	const isReceivingWindow = window.name.startsWith(WINDOW_NAME_PREFIX) && !!window.opener
+	const controller = findController()
+	const isReceivingWindow = !!controller
 
 	let defaultRequest: PresentationRequest | null = null
 	const presentation: Presentation = {
@@ -814,7 +937,7 @@ const install = () => {
 			}
 			defaultRequest = request ?? null
 		},
-		receiver: isReceivingWindow ? createReceiver() : null
+		receiver: controller ? createReceiver(controller) : null
 	}
 
 	Object.defineProperty(navigator, 'presentation', {
@@ -834,6 +957,16 @@ const install = () => {
 	})
 
 	window.presentationPolyfill = {
+		get mode() {
+			return mode
+		},
+		set mode(value) {
+			if (value !== 'popup' && value !== 'pip') {
+				throw new TypeError(`Unknown presentation mode: ${value}`)
+			}
+			mode = value
+		},
+		pipSupported: PIP_SUPPORTED,
 		addUrlResolver(resolver) {
 			urlResolvers.push(resolver)
 		},
