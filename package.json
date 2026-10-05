@@ -4,7 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "pnpm run -r build",
-		"dev": "pnpm --filter chromecast-emulator-demo dev",
+		"dev": "pnpm -r --parallel dev",
 		"test": "pnpm --filter @mattiasbuelens/chromecast-emulator test",
 		"test:e2e": "pnpm --filter chromecast-emulator-demo test:e2e",
 		"format": "prettier --write ."

@@ -49,6 +49,7 @@
 	"scripts": {
 		"build": "tsc && tsdown",
 		"typecheck": "tsc",
+		"dev": "tsdown --watch",
 		"test": "tsdown && playwright test",
 		"prepack": "pnpm run build"
 	},
