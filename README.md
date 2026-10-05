@@ -27,12 +27,15 @@ This repository is a [pnpm workspace](https://pnpm.io/workspaces) with two packa
 - `pnpm test:e2e`: builds the emulator and runs the demo's end-to-end test.
 - `pnpm format`: formats the code with Prettier.
 
-## Publishing the Emulator
+## Releasing
 
-```bash
-cd emulator
-npm publish
-```
+Releases are managed with [Changesets](https://changesets.dev/).
+
+1. When a change should be released, run `pnpm changeset` and commit the generated file in `.changeset/` along with it.
+2. On every push to `main`, the [Release workflow](.github/workflows/release.yml) opens or updates a
+   "Version Packages" pull request that bumps the version and updates `emulator/CHANGELOG.md`.
+3. Merging that pull request publishes the new version to npm with
+   [trusted publishing](https://docs.npmjs.com/trusted-publishers), and creates a git tag and GitHub release.
 
 `prepack` builds `dist/` first, so the published package is always up to date with `src/`.
 
