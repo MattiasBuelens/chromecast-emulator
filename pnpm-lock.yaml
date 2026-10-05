@@ -27,6 +27,9 @@ importers:
 
   emulator:
     devDependencies:
+      '@playwright/test':
+        specifier: 1.56.1
+        version: 1.56.1
       '@typescript/lib-dom':
         specifier: npm:modern-web-types@^0.6.0
         version: modern-web-types@0.6.0

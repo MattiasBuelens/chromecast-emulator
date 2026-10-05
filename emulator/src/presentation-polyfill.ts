@@ -114,6 +114,9 @@ type CloseReason = PresentationConnectionCloseReason
 
 const domException = (name: string, message?: string) => new DOMException(message || name, name)
 
+/** Like the spec's "queue a Presentation API task". */
+const queueTask = (callback: () => void) => setTimeout(callback)
+
 const post = <T extends MessageType>(target: Window, type: T, payload: MessagePayload<T>) => {
 	// The receiving page may live on another origin, so we cannot restrict the target origin.
 	// Both sides verify event.source instead.
@@ -153,6 +156,16 @@ const resolvePageUrl = (presentationUrl: string): string | null => {
 	const { protocol } = new URL(presentationUrl)
 	return protocol === 'http:' || protocol === 'https:' ? presentationUrl : null
 }
+
+/** Whether a URL is plain http: on a host other than localhost, so not potentially trustworthy. */
+const isAPrioriUnauthenticated = ({ protocol, hostname }: URL) =>
+	protocol === 'http:' &&
+	!(
+		hostname === 'localhost' ||
+		hostname.endsWith('.localhost') ||
+		hostname === '[::1]' ||
+		/^127(\.\d+){3}$/.test(hostname)
+	)
 
 // ----------- Events
 
@@ -241,19 +254,38 @@ const _connected = (connection: PresentationConnection) => {
 const _closed = (connection: PresentationConnection, reason: CloseReason, message?: string) => {
 	if (connection.state !== 'connecting' && connection.state !== 'connected') return
 	connection.state = 'closed'
-	connection.dispatchEvent(new PresentationConnectionCloseEvent('close', { reason, message }))
+	queueTask(() => {
+		if (connection.state === 'terminated') return
+		connection.dispatchEvent(new PresentationConnectionCloseEvent('close', { reason, message }))
+	})
 }
 
 const _terminated = (connection: PresentationConnection) => {
-	if (connection.state === 'terminated') return
-	connection.state = 'terminated'
-	connection.dispatchEvent(new Event('terminate'))
+	queueTask(() => {
+		// Like the spec says, closed connections stay closed.
+		if (connection.state !== 'connecting' && connection.state !== 'connected') return
+		connection.state = 'terminated'
+		connection.dispatchEvent(new Event('terminate'))
+	})
 }
+
+/** The messages that a connection is still delivering, so they arrive in order. */
+const receiveQueues = new WeakMap<PresentationConnection, Promise<void>>()
 
 const _received = (connection: PresentationConnection, data: MessageData) => {
 	if (connection.state !== 'connected') return
-	if (data instanceof ArrayBuffer && connection.binaryType === 'blob') data = new Blob([data])
-	connection.dispatchEvent(new MessageEvent('message', { data }))
+	const { binaryType } = connection
+	const previous = receiveQueues.get(connection) || Promise.resolve()
+	const next = previous.then(async () => {
+		// Binary messages arrive as the connection's binaryType, whatever the other side sent.
+		if (binaryType === 'blob' && data instanceof ArrayBuffer) data = new Blob([data])
+		if (binaryType === 'arraybuffer' && data instanceof Blob) data = await data.arrayBuffer()
+		connection.dispatchEvent(new MessageEvent('message', { data }))
+	})
+	receiveQueues.set(
+		connection,
+		next.catch((error) => console.error(LOG_PREFIX, 'could not receive message', error))
+	)
 }
 
 const toTransferable = (data: unknown): MessageData => {
@@ -346,34 +378,44 @@ const whenReceiverReady = (presentation: ControlledPresentation, timeoutMs?: num
 		}
 	})
 
-/** Create a controlling connection to a receiving window, and ask the receiver to accept it. */
-const connectToPresentation = (
-	presentation: ControlledPresentation,
-	url: string,
-	{ reconnect }: { reconnect: boolean }
-) => {
+/**
+ * Create a controlling connection to a receiving window. It stays in the presentation's connections
+ * after it closes, so `PresentationRequest#reconnect()` can connect it again.
+ */
+const createConnection = (presentation: ControlledPresentation, url: string) => {
 	const connectionId = randomId()
-	const connection = new PresentationConnection(presentation.id, url, {
+	const connection: PresentationConnection = new PresentationConnection(presentation.id, url, {
 		send(data) {
 			post(presentation.window, 'message', { connectionId, data })
 		},
 		close(reason, message) {
-			presentation.connections.delete(connectionId)
 			post(presentation.window, 'close', { connectionId, reason, message })
 		},
 		terminate() {
+			if (connection.state !== 'connecting' && connection.state !== 'connected') return
 			stopPresentation(presentation, connectionId)
 		}
 	})
 	presentation.connections.set(connectionId, connection)
-	post(presentation.window, 'connect', {
-		connectionId,
-		presentationId: presentation.id,
-		url,
-		reconnect,
-		userAgent: navigator.userAgent
-	})
 	return connection
+}
+
+/** Ask the receiver to accept a connection that is (again) connecting. */
+const establishConnection = (
+	presentation: ControlledPresentation,
+	connection: PresentationConnection,
+	{ reconnect }: { reconnect: boolean }
+) => {
+	for (const [connectionId, c] of presentation.connections) {
+		if (c !== connection) continue
+		post(presentation.window, 'connect', {
+			connectionId,
+			presentationId: presentation.id,
+			url: connection.url,
+			reconnect,
+			userAgent: navigator.userAgent
+		})
+	}
 }
 
 const findPresentationBySource = (source: MessageEventSource | null) => {
@@ -416,10 +458,7 @@ const listenToReceivers = () => {
 				if (connection) _received(connection, message.data)
 				break
 			case 'close':
-				if (connection) {
-					presentation.connections.delete(message.connectionId)
-					_closed(connection, message.reason || 'closed', message.message)
-				}
+				if (connection) _closed(connection, message.reason || 'closed', message.message)
 				break
 			case 'terminated':
 				terminatePresentation(presentation)
@@ -453,21 +492,32 @@ defineEventHandlers(PresentationAvailability.prototype, ['change'])
 let startInProgress = false
 
 class PresentationRequest extends EventTarget implements globalThis.PresentationRequest {
+	/** The presentation URLs that this page can present, as absolute URLs. */
 	readonly urls: readonly string[]
 	declare onconnectionavailable: globalThis.PresentationRequest['onconnectionavailable']
-	private availability: Promise<PresentationAvailability> | undefined
+	private availability: PresentationAvailability | undefined
 
 	constructor(urls: string | string[]) {
 		super()
+		if (arguments.length === 0) throw new TypeError('A presentation URL is required')
 		const list = Array.isArray(urls) ? urls : [urls]
 		if (list.length === 0) throw domException('NotSupportedError', 'No presentation URLs')
-		this.urls = list.map((url) => {
+		const parsed = list.map((url) => {
 			try {
-				return new URL(url, document.baseURI).href
+				return new URL(url, document.baseURI)
 			} catch {
-				throw new DOMException(`Invalid presentation URL: ${url}`, 'SyntaxError')
+				throw domException('SyntaxError', `Invalid presentation URL: ${url}`)
 			}
 		})
+		// Like the spec says, ignore the URLs that we cannot present.
+		const supported = parsed.filter((url) => resolvePageUrl(url.href))
+		if (supported.length === 0) {
+			throw domException('NotSupportedError', 'None of the presentation URLs are supported')
+		}
+		if (window.isSecureContext && supported.some(isAPrioriUnauthenticated)) {
+			throw domException('SecurityError', 'Presentation URLs must be potentially trustworthy')
+		}
+		this.urls = supported.map((url) => url.href)
 	}
 
 	/** Pick the first presentation URL we know how to open. */
@@ -479,10 +529,24 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 		return null
 	}
 
+	/** Whether a presentation shows a page that this request could have opened. */
+	private _matches(presentation: ControlledPresentation) {
+		if (!presentation.url) return true
+		const pageUrl = resolvePageUrl(presentation.url)
+		return this.urls.some((url) => resolvePageUrl(url) === pageUrl)
+	}
+
 	start(): Promise<PresentationConnection> {
+		// The spec checks for a user gesture first, but opening the window below uses up the gesture,
+		// so a second start() during the same gesture would fail that check instead.
 		if (startInProgress) {
 			return Promise.reject(
 				domException('OperationError', 'Another presentation is already being started')
+			)
+		}
+		if (navigator.userActivation && !navigator.userActivation.isActive) {
+			return Promise.reject(
+				domException('InvalidAccessError', 'Starting a presentation requires a user gesture')
 			)
 		}
 		const selected = this._selectUrl()
@@ -505,11 +569,7 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 		presentation.started = true
 		startInProgress = true
 		return whenReceiverReady(presentation)
-			.then(() => {
-				const connection = connectToPresentation(presentation, selected.url, { reconnect: false })
-				this._fireConnectionAvailable(connection)
-				return connection
-			})
+			.then(() => this._connect(presentation, selected.url, { reconnect: false }))
 			.finally(() => (startInProgress = false))
 	}
 
@@ -531,7 +591,8 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 		// presentations that already exist. Otherwise the poll below would grab a presentation that
 		// start() opens while we're still waiting (e.g. the Cast SDK's "auto-join" on page load).
 		const candidates = new Set(presentations.keys())
-		const isCandidate = (p: ControlledPresentation) => !p.started || candidates.has(p.id)
+		const isCandidate = (p: ControlledPresentation) =>
+			(!p.started || candidates.has(p.id)) && this._matches(p)
 		// Map special presentation IDs (like the Cast SDK's "auto-join") to a known presentation.
 		const resolveId = () => {
 			const requested = presentations.get(requestedId)
@@ -546,17 +607,24 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 			return requestedId
 		}
 		let presentationId = resolveId()
-		const live = () => {
+		const findLive = () => {
 			const presentation = presentations.get(presentationId)
-			if (!presentation || presentation.window.closed) return null
-			// Reuse an existing connection to this presentation, as the spec says.
-			for (const connection of presentation.connections.values()) {
-				if (connection.state === 'connecting' || connection.state === 'connected') return connection
-			}
+			if (!presentation || presentation.window.closed || !isCandidate(presentation)) return null
 			return presentation
 		}
-		const found = live()
-		if (found instanceof PresentationConnection) return Promise.resolve(found)
+		const found = findLive()
+		if (found) {
+			// Reuse this page's connection to the presentation, as the spec says.
+			const connections = [...found.connections.values()]
+			const open = connections.find((c) => c.state === 'connecting' || c.state === 'connected')
+			if (open) return Promise.resolve(open)
+			const closed = connections.find((c) => c.state === 'closed')
+			if (closed) {
+				closed.state = 'connecting'
+				establishConnection(found, closed, { reconnect: true })
+				return Promise.resolve(closed)
+			}
+		}
 
 		const wait = found
 			? whenReceiverReady(found, RECEIVER_DISCOVERY_TIMEOUT_MS)
@@ -565,8 +633,7 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 					const started = Date.now()
 					const poll = setInterval(() => {
 						presentationId = resolveId()
-						const presentation = presentations.get(presentationId)
-						if (presentation && isCandidate(presentation)) {
+						if (findLive()) {
 							clearInterval(poll)
 							resolve()
 						} else if (Date.now() - started > RECEIVER_DISCOVERY_TIMEOUT_MS) {
@@ -577,30 +644,38 @@ class PresentationRequest extends EventTarget implements globalThis.Presentation
 				})
 
 		return wait.then(() => {
-			const presentation = presentations.get(presentationId)
-			if (!presentation || presentation.window.closed) {
+			const presentation = findLive()
+			if (!presentation) {
 				throw domException('NotFoundError', `No presentation with ID ${presentationId}`)
 			}
 			const url = this._selectUrl()?.url || presentation.url || this.urls[0]
-			const connection = connectToPresentation(presentation, url, { reconnect: true })
-			this._fireConnectionAvailable(connection)
-			return connection
+			return this._connect(presentation, url, { reconnect: true })
 		})
 	}
 
 	getAvailability(): Promise<PresentationAvailability> {
-		if (!this.availability) {
-			this.availability = Promise.resolve(new PresentationAvailability(!!this._selectUrl()))
-		}
-		return this.availability
+		// A new promise each time, but always with the same availability object.
+		this.availability ||= new PresentationAvailability(!!this._selectUrl())
+		return Promise.resolve(this.availability)
 	}
 
-	private _fireConnectionAvailable(connection: PresentationConnection) {
-		setTimeout(() =>
+	/**
+	 * Create a new connection to the presentation. Like the spec says, the `connectionavailable`
+	 * event fires after the returned promise resolves, and before the connection connects.
+	 */
+	private _connect(
+		presentation: ControlledPresentation,
+		url: string,
+		options: { reconnect: boolean }
+	) {
+		const connection = createConnection(presentation, url)
+		queueTask(() => {
 			this.dispatchEvent(
 				new PresentationConnectionAvailableEvent('connectionavailable', { connection })
 			)
-		)
+			establishConnection(presentation, connection, options)
+		})
+		return connection
 	}
 }
 defineEventHandlers(PresentationRequest.prototype, ['connectionavailable'])
@@ -644,9 +719,13 @@ const createReceiver = () => {
 	const sendTerminated = () => post(controller, 'terminated', {})
 
 	window.addEventListener('message', (event) => {
-		if (event.source !== controller) return
 		const message = readMessage(event.data)
 		if (!message) return
+		if (event.source !== controller) {
+			// When the controlling page reloads, its "wentaway" message arrives after it unloaded, so
+			// without a source. Its unguessable connection ID still tells us who sent it.
+			if (event.source !== null || message.type !== 'close') return
+		}
 
 		switch (message.type) {
 			case 'connect': {
@@ -658,12 +737,15 @@ const createReceiver = () => {
 						post(controller, 'message', { connectionId, data })
 					},
 					close(reason, message) {
+						// The controlling page may reconnect with the same connection ID.
+						connections.delete(connectionId)
 						post(controller, 'close', { connectionId, reason, message })
 					},
 					terminate() {
 						for (const c of connections.values()) _terminated(c)
 						sendTerminated()
-						window.close()
+						// Close the window after the terminate events.
+						queueTask(() => window.close())
 					}
 				})
 				Object.defineProperty(connection, 'polyfillInfo', {
@@ -698,7 +780,7 @@ const createReceiver = () => {
 			case 'terminate':
 				for (const c of connections.values()) _terminated(c)
 				connections.clear()
-				window.close()
+				queueTask(() => window.close())
 				break
 		}
 	})
@@ -727,7 +809,10 @@ const install = () => {
 			return defaultRequest
 		},
 		set defaultRequest(request) {
-			defaultRequest = request instanceof PresentationRequest ? request : null
+			if (request != null && !(request instanceof PresentationRequest)) {
+				throw new TypeError('defaultRequest must be a PresentationRequest or null')
+			}
+			defaultRequest = request ?? null
 		},
 		receiver: isReceivingWindow ? createReceiver() : null
 	}
