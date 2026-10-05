@@ -57,7 +57,7 @@ media.
 
 ```bash
 pnpm --filter chromecast-emulator-demo exec playwright install chromium  # once
-pnpm test:e2e
+pnpm --filter chromecast-emulator-demo test
 ```
 
 Playwright starts the dev server on port 4173 and launches Chromium with

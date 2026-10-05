@@ -4,10 +4,10 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "pnpm --filter @mattiasbuelens/chromecast-emulator build && vite",
+		"dev": "vite",
 		"build": "pnpm --filter @mattiasbuelens/chromecast-emulator build && vite build",
 		"preview": "vite preview",
-		"test:e2e": "pnpm --filter @mattiasbuelens/chromecast-emulator build && playwright test"
+		"test": "pnpm --filter @mattiasbuelens/chromecast-emulator build && playwright test"
 	},
 	"dependencies": {
 		"@mattiasbuelens/chromecast-emulator": "workspace:*"
