@@ -22,6 +22,8 @@ This repository is a [pnpm workspace](https://pnpm.io/workspaces) with two packa
 
 - `pnpm dev`: builds the emulator and runs the demo. Open `/sender/` and click the cast button.
 - `pnpm build`: builds the emulator (into `emulator/dist`) and the demo (into `demo/dist`).
+- `pnpm test`: builds the emulator and runs the Presentation API polyfill's tests, adapted from
+  [web-platform-tests](https://github.com/web-platform-tests/wpt/tree/master/presentation-api).
 - `pnpm test:e2e`: builds the emulator and runs the demo's end-to-end test.
 - `pnpm format`: formats the code with Prettier.
 
