@@ -20,11 +20,15 @@ This repository is a [pnpm workspace](https://pnpm.io/workspaces) with two packa
 
 ## Scripts
 
-- `pnpm dev`: runs the dev script of every package in parallel: tsdown rebuilds the emulator on change, and Vite serves the demo and reloads the page when the emulator is rebuilt. Open `/sender/` and click the cast button.
+- `pnpm dev`: runs every package's dev script in parallel. tsdown rebuilds the emulator on every
+  change, and Vite serves the demo and reloads the page when the emulator is rebuilt. Open
+  `/sender/` and click the cast button.
 - `pnpm build`: builds the emulator (into `emulator/dist`) and the demo (into `demo/dist`).
-- `pnpm test`: builds the emulator and runs the Presentation API polyfill's tests, adapted from
-  [web-platform-tests](https://github.com/web-platform-tests/wpt/tree/master/presentation-api).
-- `pnpm test:e2e`: builds the emulator and runs the demo's end-to-end test.
+- `pnpm test`: runs every package's tests: the emulator's Presentation API polyfill tests, adapted
+  from [web-platform-tests](https://github.com/web-platform-tests/wpt/tree/master/presentation-api),
+  and the demo's end-to-end test. Each builds the emulator first. Use
+  `pnpm --filter <package> test` to run one package's tests.
+- `pnpm typecheck`: type-checks the emulator.
 - `pnpm format`: formats the code with Prettier.
 
 ## Publishing the Emulator

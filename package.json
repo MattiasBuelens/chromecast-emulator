@@ -5,8 +5,8 @@
 	"scripts": {
 		"build": "pnpm run -r build",
 		"dev": "pnpm -r --parallel dev",
-		"test": "pnpm --filter @mattiasbuelens/chromecast-emulator test",
-		"test:e2e": "pnpm --filter chromecast-emulator-demo test:e2e",
+		"test": "pnpm -r --no-bail test",
+		"typecheck": "pnpm -r typecheck",
 		"format": "prettier --write ."
 	},
 	"devDependencies": {
