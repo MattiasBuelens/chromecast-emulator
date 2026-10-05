@@ -781,6 +781,7 @@ const nativePlay = HTMLMediaElement.prototype.play
 const nativePause = HTMLMediaElement.prototype.pause
 HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
 	blockedMedia.delete(this)
+	pendingAutoplay.delete(this)
 	const result = nativePlay.call(this)
 	result?.catch?.((error) => {
 		if (error?.name !== 'NotAllowedError' || !this.paused) return
@@ -791,8 +792,44 @@ HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
 }
 HTMLMediaElement.prototype.pause = function (this: HTMLMediaElement) {
 	blockedMedia.delete(this)
+	pendingAutoplay.delete(this)
 	return nativePause.call(this)
 }
+
+// CAF starts media with the autoplay attribute rather than play(). When the autoplay policy blocks
+// that, the media silently stays paused (and CAF shows its buffering spinner forever). So once the
+// media could have autoplayed, we call play() ourselves: its rejection tells us it was blocked.
+/** Media elements that should autoplay what they're loading, and haven't been played or paused. */
+const pendingAutoplay = new WeakSet<HTMLMediaElement>()
+const watchedMedia = new WeakSet<HTMLMediaElement>()
+const expectAutoplay = (media: HTMLMediaElement) => {
+	pendingAutoplay.add(media)
+	if (watchedMedia.has(media)) return
+	watchedMedia.add(media)
+	// Autoplay starts when there's enough data, right before this event fires.
+	media.addEventListener('canplaythrough', () => {
+		if (!pendingAutoplay.has(media)) return
+		pendingAutoplay.delete(media)
+		if (media.autoplay && media.paused) {
+			log('autoplay did not start, trying play()')
+			media.play().catch(() => {})
+		}
+	})
+}
+const nativeLoad = HTMLMediaElement.prototype.load
+HTMLMediaElement.prototype.load = function (this: HTMLMediaElement) {
+	if (this.autoplay) expectAutoplay(this)
+	return nativeLoad.call(this)
+}
+const autoplayProperty = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'autoplay')!
+Object.defineProperty(HTMLMediaElement.prototype, 'autoplay', {
+	...autoplayProperty,
+	set(this: HTMLMediaElement, value: boolean) {
+		autoplayProperty.set!.call(this, value)
+		if (value) expectAutoplay(this)
+		else pendingAutoplay.delete(this)
+	}
+})
 
 /** Play the media that the autoplay policy blocked, now that the window has a user gesture. */
 const resumeBlockedMedia = () => {
