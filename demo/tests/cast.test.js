@@ -145,3 +145,51 @@ test('stops casting from the cast button', async ({ page: sender }) => {
 		.toBe('NOT_CONNECTED')
 	expect(popups).toBe(0)
 })
+
+test('fills in media status fields the receiver leaves out', async ({ page: sender }) => {
+	await sender.goto('/sender/')
+	await sender.waitForFunction(
+		() => window.cast?.framework?.CastContext.getInstance().getCastState() === 'NOT_CONNECTED'
+	)
+	const [receiver] = await Promise.all([
+		sender.waitForEvent('popup'),
+		sender.locator('#castbutton').click()
+	])
+	await expect(receiver.locator('cast-media-player')).toBeAttached()
+	await expect
+		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+		.toBe('SESSION_STARTED')
+	await sender.locator('#thumb0Div').click()
+	await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PLAYING')
+
+	// The media statuses the receiver sent, and the ones the emulator passed on to the sender SDK.
+	const statuses = await receiver.evaluate(() =>
+		window.castReceiverEmulator.trace.flatMap(({ direction, message }) => {
+			if (direction === 'receiver -> platform') {
+				const { data } = JSON.parse(/** @type {string} */ (message))
+				message = JSON.parse(data)
+			} else if (direction === 'emulator -> sender') {
+				message = /** @type {any} */ (message).message
+			} else {
+				return []
+			}
+			if (message?.type !== 'MEDIA_STATUS') return []
+			return message.status.map((/** @type {any} */ status) => ({
+				direction,
+				mediaSessionId: status.mediaSessionId,
+				hasMedia: !!status.media
+			}))
+		})
+	)
+	const fromReceiver = statuses.filter(({ direction }) => direction === 'receiver -> platform')
+	const toSender = statuses.filter(({ direction }) => direction === 'emulator -> sender')
+	// CAF only includes `media` in a status when it has changed...
+	expect(fromReceiver.some(({ hasMedia }) => !hasMedia)).toBe(true)
+	// ...but like Chrome, the emulator fills it in from the previous status of the same media session.
+	// (Otherwise the sender SDK can create a media session without media info.)
+	const seen = new Set()
+	for (const { mediaSessionId, hasMedia } of toSender) {
+		if (seen.has(mediaSessionId)) expect(hasMedia).toBe(true)
+		if (hasMedia) seen.add(mediaSessionId)
+	}
+})

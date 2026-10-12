@@ -74,6 +74,7 @@ interface V2Message extends JsonObject {
 }
 
 interface MediaStatus extends JsonObject {
+	mediaSessionId?: number
 	sessionId?: string
 	supportedMediaCommands?: number | string[]
 }
@@ -430,23 +431,34 @@ const device = {
 
 	handleMediaMessage(destination: string, message: unknown) {
 		if (!message || typeof message !== 'object') return
-		const data = message as { type?: unknown; requestId?: number; status?: MediaStatus[] | null }
+		const data = message as {
+			type?: unknown
+			requestId?: number
+			sessionId?: string
+			status?: MediaStatus[] | null
+		}
 		const pending =
 			data.requestId !== undefined ? this.pendingRequests.get(data.requestId) : undefined
 		if (pending) this.pendingRequests.delete(data.requestId!)
 
 		if (data.type === 'MEDIA_STATUS') {
-			// Like Chrome, tag each media status with the session ID; the sender SDK needs it to find the session.
-			// Chrome also turns the supportedMediaCommands bit mask into the list of names the sender SDK expects.
-			if (Array.isArray(data.status)) {
-				for (const status of data.status) {
-					status.sessionId = this.sessionId
-					if (typeof status.supportedMediaCommands === 'number') {
-						status.supportedMediaCommands = mediaCommandsToList(status.supportedMediaCommands)
-					}
+			// Like Chrome, drop a status without a list, and anything in the list that isn't an object.
+			if (!Array.isArray(data.status)) return
+			data.status = data.status.filter((status) => !!status && typeof status === 'object')
+			// Like Chrome, tag the message and each media status with the session ID; the sender SDK needs it
+			// to find the session. Chrome also turns the supportedMediaCommands bit mask into the list of names
+			// the sender SDK expects.
+			data.sessionId = this.sessionId
+			for (const status of data.status) {
+				status.sessionId = this.sessionId
+				if (typeof status.supportedMediaCommands === 'number') {
+					status.supportedMediaCommands = mediaCommandsToList(status.supportedMediaCommands)
 				}
 			}
-			this.lastMediaStatus = data.status || null
+			// Like Chrome, fill in the fields a status leaves out (CAF only sends `media` when it changes)
+			// from the previous status with the same media session.
+			copySavedMediaFields(data.status, this.lastMediaStatus)
+			this.lastMediaStatus = data.status
 			// The receiver may have created a new media element.
 			this.applyDeviceVolume()
 			// Every sender gets media status updates; only the one that asked gets the sequence number.
@@ -742,6 +754,18 @@ const MEDIA_COMMAND_NAMES: Array<[bit: number, name: string]> = [
 ]
 const mediaCommandsToList = (mask: number) =>
 	MEDIA_COMMAND_NAMES.filter(([bit]) => mask & bit).map(([, name]) => name)
+
+/** Copies fields missing from each status from the saved status with the same `mediaSessionId`, like Chrome's `CastSessionTracker`. */
+const copySavedMediaFields = (statuses: MediaStatus[], saved: MediaStatus[] | null) => {
+	for (const status of statuses) {
+		if (typeof status.mediaSessionId !== 'number') continue
+		const previous = saved?.find((s) => s.mediaSessionId === status.mediaSessionId)
+		if (!previous) continue
+		for (const [key, value] of Object.entries(previous)) {
+			if (!(key in status)) status[key] = value
+		}
+	}
+}
 
 /** All audio and video elements in a document, including inside open shadow roots like <cast-media-player>. */
 const findMediaElements = (root: ParentNode): HTMLMediaElement[] => {
