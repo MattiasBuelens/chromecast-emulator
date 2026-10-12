@@ -1,7 +1,21 @@
+/** Which other senders may join a session, and leave it along with a sender that leaves. */
+export type AutoJoinPolicy = 'page_scoped' | 'tab_and_origin_scoped' | 'origin_scoped'
+
 export interface CastUrl {
 	appIds: string[]
 	clientId: string
+	autoJoinPolicy: AutoJoinPolicy
 }
+
+const AUTO_JOIN_POLICIES: readonly string[] = [
+	'page_scoped',
+	'tab_and_origin_scoped',
+	'origin_scoped'
+] satisfies AutoJoinPolicy[]
+
+// Like Chrome, an unknown or missing policy means "page_scoped".
+const toAutoJoinPolicy = (value: string | null | undefined): AutoJoinPolicy =>
+	value && AUTO_JOIN_POLICIES.includes(value) ? (value as AutoJoinPolicy) : 'page_scoped'
 
 // Like Chrome, name Cast presentations after their Cast session: "cast-session_<sessionId>".
 // The receiver emulator uses the rest of the presentation ID as the session ID.
@@ -16,7 +30,12 @@ export const parseCastUrl = (presentationUrl: string): CastUrl | null => {
 	const url = new URL(presentationUrl)
 	if (url.protocol === 'cast:') {
 		const appId = url.pathname
-		return appId ? { appIds: [appId], clientId: url.searchParams.get('clientId') || '' } : null
+		if (!appId) return null
+		return {
+			appIds: [appId],
+			clientId: url.searchParams.get('clientId') || '',
+			autoJoinPolicy: toAutoJoinPolicy(url.searchParams.get('autoJoinPolicy'))
+		}
 	}
 	if (/^https?:$/.test(url.protocol) && url.hostname === 'google.com' && url.pathname === '/cast') {
 		const params = url.hash
@@ -29,7 +48,10 @@ export const parseCastUrl = (presentationUrl: string): CastUrl | null => {
 			.map(([, value]) => value.replace(/\(.*$/, '')) // strip "(capabilities)"
 			.filter(Boolean)
 		const clientId = params.find(([key]) => key === '__castClientId__')?.[1] || ''
-		return appIds.length ? { appIds, clientId } : null
+		const autoJoinPolicy = toAutoJoinPolicy(
+			params.find(([key]) => key === '__castAutoJoinPolicy__')?.[1]
+		)
+		return appIds.length ? { appIds, clientId, autoJoinPolicy } : null
 	}
 	return null
 }

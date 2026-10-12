@@ -23,7 +23,7 @@
  * For debugging, `castReceiverEmulator.trace` holds the most recent IPC and sender messages, and
  * every message is also logged with console.debug() (shown with the "Verbose" log level).
  */
-import { parseCastUrl, SESSION_ID_PREFIX } from './shared/cast-url'
+import { type AutoJoinPolicy, parseCastUrl, SESSION_ID_PREFIX } from './shared/cast-url'
 import { defineEventHandlers, randomId } from './shared/utils'
 
 interface CastPlatform {
@@ -46,6 +46,7 @@ interface Client {
 	announced: boolean
 	reconnect: boolean
 	userAgent: string
+	autoJoinPolicy: AutoJoinPolicy
 }
 
 /** A message between the receiver SDK and the platform, over the IPC WebSocket. */
@@ -470,6 +471,8 @@ const device = {
 			}
 			return
 		}
+		// Like Chrome, other media messages only go to the sender they are addressed to.
+		if (!destination || destination === '*') return
 		for (const client of this.clientsFor(destination)) {
 			const sequenceNumber =
 				pending?.clientId === client.clientId ? pending.sequenceNumber : undefined
@@ -514,7 +517,8 @@ const device = {
 			connection,
 			announced: false,
 			reconnect: !!info?.reconnect,
-			userAgent: info?.userAgent || ''
+			userAgent: info?.userAgent || '',
+			autoJoinPolicy: cast.autoJoinPolicy
 		}
 		const previous = this.clients.get(clientId)
 		if (previous && previous.connection !== connection) previous.connection.close()
@@ -574,6 +578,14 @@ const device = {
 			userAgent: client.userAgent,
 			largeMessageSupported: false
 		})
+		if (!client.reconnect && client.senderId === this.launchingSenderId) {
+			// Right after a launch, Chrome asks the receiver for its media status on behalf of the sender
+			// that launched it. Every sender gets the answer, without a sequence number.
+			this.sendIpc(MEDIA_NAMESPACE, client.senderId, {
+				type: 'GET_STATUS',
+				requestId: this.nextRequestId++
+			})
+		}
 	},
 
 	receiverInfo() {
@@ -592,6 +604,9 @@ const device = {
 		const session: JsonObject = {
 			sessionId: this.sessionId,
 			appId: this.appId,
+			// A real device reports these in its receiver status, and Chrome passes them on.
+			appType: 'WEB',
+			universalAppId: this.appId,
 			transportId: this.transportId,
 			receiver: this.receiverInfo(),
 			displayName: this.displayName,
@@ -675,7 +690,11 @@ const device = {
 
 			case 'leave_session':
 				this.sendToClient(client, 'leave_session', null, sequenceNumber)
-				client.connection.close()
+				// Like Chrome, disconnect every sender that would auto-join this one's session. All senders
+				// share the window that opened this receiver, so only their own policy matters.
+				for (const other of [...this.clients.values()]) {
+					if (other.autoJoinPolicy !== 'page_scoped') other.connection.close()
+				}
 				break
 
 			default:
@@ -715,12 +734,8 @@ const device = {
 				this.stopSession()
 				break
 			default:
-				this.sendError(
-					client,
-					sequenceNumber,
-					'invalid_parameter',
-					`Unknown v2 message type: ${type}`
-				)
+				// Chrome ignores these too, without answering.
+				log('unknown v2 message type', body)
 		}
 	},
 

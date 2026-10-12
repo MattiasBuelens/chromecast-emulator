@@ -146,7 +146,11 @@ test('stops casting from the cast button', async ({ page: sender }) => {
 	expect(popups).toBe(0)
 })
 
-test('fills in media status fields the receiver leaves out', async ({ page: sender }) => {
+/**
+ * Start casting from the sender page, and return the receiver page once the session started.
+ * @param {Page} sender
+ */
+const startCasting = async (sender) => {
 	await sender.goto('/sender/')
 	await sender.waitForFunction(
 		() => window.cast?.framework?.CastContext.getInstance().getCastState() === 'NOT_CONNECTED'
@@ -159,6 +163,77 @@ test('fills in media status fields the receiver leaves out', async ({ page: send
 	await expect
 		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
 		.toBe('SESSION_STARTED')
+	return receiver
+}
+
+/**
+ * The messages the receiver emulator exchanged, with their (parsed) payloads.
+ * @param {Page} receiver
+ */
+const getTrace = (receiver) =>
+	receiver.evaluate(() =>
+		window.castReceiverEmulator.trace.map(({ direction, message }) => {
+			if (direction === 'emulator -> sender') return { direction, message }
+			/** @type {any} */
+			let parsed = JSON.parse(/** @type {string} */ (message))
+			// IPC messages carry their payload as a JSON string.
+			if (typeof parsed?.data === 'string') {
+				try {
+					parsed = { ...parsed, data: JSON.parse(parsed.data) }
+				} catch {}
+			}
+			return { direction, message: parsed }
+		})
+	)
+
+test('asks the receiver for its media status after a launch, like Chrome', async ({
+	page: sender
+}) => {
+	const receiver = await startCasting(sender)
+
+	await expect
+		.poll(async () =>
+			(await getTrace(receiver)).some(
+				({ direction, message }) =>
+					direction === 'emulator -> sender' &&
+					message.type === 'v2_message' &&
+					message.message?.type === 'MEDIA_STATUS'
+			)
+		)
+		.toBe(true)
+	const trace = await getTrace(receiver)
+	expect(
+		trace.some(
+			({ direction, message }) =>
+				direction === 'platform -> receiver' && message.data?.type === 'GET_STATUS'
+		)
+	).toBe(true)
+	// The session info has the fields a real device reports.
+	const newSession = trace.find(({ message }) => message.type === 'new_session')?.message.message
+	expect(newSession).toMatchObject({ appType: 'WEB', universalAppId: newSession?.appId })
+})
+
+test('leaves the session without stopping the receiver', async ({ page: sender }) => {
+	const receiver = await startCasting(sender)
+
+	await sender.evaluate(() => cast.framework.CastContext.getInstance().endCurrentSession(false))
+	await expect
+		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+		.toBe('SESSION_ENDED')
+	// The sender disconnected, but the receiver keeps running.
+	await expect
+		.poll(async () =>
+			(await getTrace(receiver)).some(
+				({ direction, message }) =>
+					direction === 'platform -> receiver' && message.data?.type === 'senderdisconnected'
+			)
+		)
+		.toBe(true)
+	expect(receiver.isClosed()).toBe(false)
+})
+
+test('fills in media status fields the receiver leaves out', async ({ page: sender }) => {
+	const receiver = await startCasting(sender)
 	await sender.locator('#thumb0Div').click()
 	await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PLAYING')
 
