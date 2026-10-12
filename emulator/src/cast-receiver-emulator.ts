@@ -74,6 +74,7 @@ interface V2Message extends JsonObject {
 }
 
 interface MediaStatus extends JsonObject {
+	mediaSessionId?: number
 	sessionId?: string
 	supportedMediaCommands?: number | string[]
 }
@@ -445,6 +446,9 @@ const device = {
 						status.supportedMediaCommands = mediaCommandsToList(status.supportedMediaCommands)
 					}
 				}
+				// Like Chrome, fill in the fields a status leaves out (CAF only sends `media` when it changes)
+				// from the previous status with the same media session.
+				copySavedMediaFields(data.status, this.lastMediaStatus)
 			}
 			this.lastMediaStatus = data.status || null
 			// The receiver may have created a new media element.
@@ -742,6 +746,17 @@ const MEDIA_COMMAND_NAMES: Array<[bit: number, name: string]> = [
 ]
 const mediaCommandsToList = (mask: number) =>
 	MEDIA_COMMAND_NAMES.filter(([bit]) => mask & bit).map(([, name]) => name)
+
+/** Copies fields missing from each status from the saved status with the same `mediaSessionId`, like Chrome's `CastSessionTracker`. */
+const copySavedMediaFields = (statuses: MediaStatus[], saved: MediaStatus[] | null) => {
+	for (const status of statuses) {
+		const previous = saved?.find((s) => s.mediaSessionId === status.mediaSessionId)
+		if (!previous) continue
+		for (const [key, value] of Object.entries(previous)) {
+			if (!(key in status)) status[key] = value
+		}
+	}
+}
 
 /** All audio and video elements in a document, including inside open shadow roots like <cast-media-player>. */
 const findMediaElements = (root: ParentNode): HTMLMediaElement[] => {
