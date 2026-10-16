@@ -13,7 +13,8 @@ pnpm dev
 
 1. Open the sender at `http://localhost:5173/sender/`.
 1. Click the cast button. The receiver opens in a popup window. Allow pop-ups for localhost if
-   Chrome blocks it.
+   Chrome blocks it. To open it in a Picture-in-Picture window instead, pick that in the
+   "Open receiver in" menu at the top right, or open the sender with `?mode=pip`.
 1. Pick a video. It plays in the receiver window, and the sender's controls control it.
 1. If a "Click to allow media playback" bar shows up in the receiver window, click it once (see
    [Troubleshooting](../emulator/README.md#troubleshooting)).
@@ -51,6 +52,7 @@ SDK. See the [emulator's README](../emulator/README.md) for how the emulator wor
 [Playwright](https://playwright.dev/): it opens the sender, clicks the cast button, picks up the
 receiver popup with `page.waitForEvent('popup')`, plays a video and pauses it from the sender, and
 checks the result on both sides (the receiver's `<video>`, and the sender SDK's media session).
+Every test runs twice: with the receiver in a popup, and in a Picture-in-Picture window.
 Both pages use the real Cast SDKs, so the test needs access to `www.gstatic.com`. The video comes
 from [`tests/fixtures`](./tests/fixtures), served with `context.route()` in place of the sample
 media.
