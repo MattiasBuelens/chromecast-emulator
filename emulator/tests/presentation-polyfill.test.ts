@@ -755,12 +755,7 @@ test.describe('pip mode', () => {
 	}
 
 	test('defaults to the data-mode of the script', async ({ controller }) => {
-		expect(
-			await controller.evaluate(() => ({
-				mode: window.presentationPolyfill!.mode,
-				pipSupported: window.presentationPolyfill!.pipSupported
-			}))
-		).toEqual({ mode: 'popup', pipSupported: true })
+		expect(await controller.evaluate(() => window.presentationPolyfill!.mode)).toBe('popup')
 		await controller.goto(`${ORIGIN}/controller-pip.html`)
 		expect(await controller.evaluate(() => window.presentationPolyfill!.mode)).toBe('pip')
 		expect(

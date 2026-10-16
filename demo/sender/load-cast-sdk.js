@@ -30,7 +30,7 @@ await loadScripts([
 
 const picker = /** @type {HTMLSelectElement} */ (document.querySelector('#receiver_mode select'))
 picker.value = mode
-if (!presentationPolyfill.pipSupported) {
+if (!('documentPictureInPicture' in window)) {
 	const pipOption = /** @type {HTMLOptionElement} */ (picker.querySelector('option[value="pip"]'))
 	pipOption.disabled = true
 	pipOption.textContent += ' (not supported)'

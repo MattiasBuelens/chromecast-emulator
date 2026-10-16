@@ -44,8 +44,6 @@ export interface PresentationPolyfill {
 	 * to a popup.
 	 */
 	mode: PresentationMode
-	/** Whether this browser supports the `pip` mode. */
-	readonly pipSupported: boolean
 	/**
 	 * Register a function that maps a presentation URL to the URL of the page to open
 	 * for it, or returns null when it does not handle that URL.
@@ -966,7 +964,6 @@ const install = () => {
 			}
 			mode = value
 		},
-		pipSupported: PIP_SUPPORTED,
 		addUrlResolver(resolver) {
 			urlResolvers.push(resolver)
 		},

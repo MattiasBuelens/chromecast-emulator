@@ -90,8 +90,7 @@ inside that window, at the same 1280×720 size as in a popup, scaled down to fit
 ```
 
 Or switch at any time with `presentationPolyfill.mode = 'pip'` (or `'popup'`); the next cast
-uses the new mode. `presentationPolyfill.pipSupported` tells whether the browser supports it.
-Browsers without Document Picture-in-Picture fall back to a popup.
+uses the new mode. Browsers without Document Picture-in-Picture fall back to a popup.
 
 Since the receiver page runs in an iframe, it must allow being framed by the sender's origin
 (no `X-Frame-Options: DENY` or restrictive `frame-ancestors`).
