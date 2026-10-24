@@ -1,5 +1,15 @@
 # @mattiasbuelens/chromecast-emulator
 
+## 0.2.0
+
+### Minor Changes
+
+- Add a Picture-in-Picture mode that opens the receiver in a Document Picture-in-Picture window instead of a popup. ([#13](https://github.com/MattiasBuelens/chromecast-emulator/pull/13))
+
+### Patch Changes
+
+- Show the "Click to allow media playback" bar when the autoplay policy blocks media that the receiver starts with the autoplay attribute, as CAF does, instead of stalling on a loading spinner. ([#13](https://github.com/MattiasBuelens/chromecast-emulator/pull/13))
+
 ## 0.1.1
 
 ### Patch Changes
