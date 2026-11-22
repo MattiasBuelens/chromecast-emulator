@@ -15,7 +15,8 @@ const GOOGLE_NAMESPACE_PREFIX = 'urn:x-cast:com.google.cast.'
  */
 const shortNamespace = (namespace) => {
 	if (!namespace) return ''
-	if (namespace.startsWith(GOOGLE_NAMESPACE_PREFIX)) return namespace.slice(GOOGLE_NAMESPACE_PREFIX.length)
+	if (namespace.startsWith(GOOGLE_NAMESPACE_PREFIX))
+		return namespace.slice(GOOGLE_NAMESPACE_PREFIX.length)
 	return namespace.replace(NAMESPACE_PREFIX, '')
 }
 

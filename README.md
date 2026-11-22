@@ -30,7 +30,9 @@ This repository is a [pnpm workspace](https://pnpm.io/workspaces) with two packa
   and the demo's end-to-end test. Each builds the emulator first. Use
   `pnpm --filter <package> test` to run one package's tests.
 - `pnpm typecheck`: type-checks the emulator.
-- `pnpm format`: formats the code with Prettier.
+- `pnpm format`: formats the code with [Oxfmt](https://oxc.rs/docs/guide/usage/formatter). CI runs
+  `pnpm format:check`.
+- `pnpm lint`: lints the code with [Oxlint](https://oxc.rs/docs/guide/usage/linter).
 
 ## Releasing
 

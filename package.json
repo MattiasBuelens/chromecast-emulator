@@ -7,12 +7,15 @@
 		"dev": "pnpm -r --parallel dev",
 		"test": "pnpm -r --no-bail test",
 		"typecheck": "pnpm -r typecheck",
-		"format": "prettier --write ."
+		"format": "oxfmt",
+		"format:check": "oxfmt --check",
+		"lint": "oxlint"
 	},
 	"devDependencies": {
 		"@changesets/changelog-github": "1.0.1",
 		"@changesets/cli": "^3.0.3",
-		"prettier": "^3.6.2"
+		"oxfmt": "0.79.0",
+		"oxlint": "1.94.0"
 	},
 	"packageManager": "pnpm@10.28.0"
 }
