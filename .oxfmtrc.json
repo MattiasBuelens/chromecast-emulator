@@ -6,5 +6,5 @@
 	"semi": false,
 	"printWidth": 100,
 	"sortPackageJson": false,
-	"ignorePatterns": ["pnpm-lock.yaml", "dist", "test-results", "playwright-report", "CHANGELOG.md"]
+	"ignorePatterns": ["pnpm-lock.yaml", "dist", "test-results", "playwright-report"]
 }
