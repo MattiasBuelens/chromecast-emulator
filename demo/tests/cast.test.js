@@ -416,3 +416,20 @@ test.describe('in a browser other than Chrome', () => {
 			.toBe('SESSION_ENDED')
 	})
 })
+
+test.describe('in a browser without Document Picture-in-Picture', () => {
+	test.beforeEach(async ({ context }) => {
+		await context.addInitScript(() => {
+			delete (/** @type {any} */ (window).documentPictureInPicture)
+		})
+	})
+
+	test('disables the Picture-in-Picture receiver mode and casts in a popup', async ({
+		page: sender
+	}) => {
+		await sender.goto('./')
+		await expect(sender.getByRole('radio', { name: 'Picture-in-Picture' })).toBeDisabled()
+		await expect(sender.getByRole('radio', { name: 'Popup' })).toBeChecked()
+		await startCasting(sender)
+	})
+})
