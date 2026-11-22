@@ -91,6 +91,12 @@ const castFromSender = async (sender, mode) => {
 
 for (const mode of /** @type {const} */ (['popup', 'pip'])) {
 	test.describe(`${mode} mode`, () => {
+		// Only Chromium has Document Picture-in-Picture.
+		test.skip(
+			({ browserName }) => mode === 'pip' && browserName !== 'chromium',
+			'Document Picture-in-Picture is not supported'
+		)
+
 		test('casts and controls media from the sender to the receiver', async ({ page: sender }) => {
 			// Cast: the emulator opens the receiver page.
 			const { receiver, receiverWindow } = await castFromSender(sender, mode)
@@ -295,4 +301,23 @@ test('fills in media status fields the receiver leaves out', async ({ page: send
 		if (seen.has(mediaSessionId)) expect(hasMedia).toBe(true)
 		if (hasMedia) seen.add(mediaSessionId)
 	}
+})
+
+test.describe('in a browser other than Chrome', () => {
+	// cast_sender.js only loads the Cast API when the user agent says Chrome.
+	test.use({
+		userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0'
+	})
+
+	test('loads the Cast API, casts and stops casting', async ({ page: sender }) => {
+		const receiver = await startCasting(sender)
+		expect(await sender.evaluate(() => typeof chrome.cast?.media)).toBe('object')
+
+		// The Cast API notices when the session ends. (An old version of it doesn't.)
+		await sender.evaluate(() => cast.framework.CastContext.getInstance().endCurrentSession(true))
+		await expect.poll(() => receiver.isClosed()).toBe(true)
+		await expect
+			.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+			.toBe('SESSION_ENDED')
+	})
 })

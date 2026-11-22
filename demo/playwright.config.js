@@ -12,19 +12,40 @@ export default defineConfig({
 	reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
 	use: {
 		baseURL: `http://localhost:${PORT}`,
-		trace: 'retain-on-failure',
-		launchOptions: {
-			// The receiver popup has no user gesture of its own, so let it play media right away.
-			// CHROMIUM_ARGS adds more flags, e.g. to trust a proxy's CA certificate in CI.
-			args: [
-				'--autoplay-policy=no-user-gesture-required',
-				...(process.env.CHROMIUM_ARGS?.split(' ').filter(Boolean) ?? [])
-			],
-			// Use a Chromium that is already installed, instead of `playwright install chromium`.
-			executablePath: process.env.CHROMIUM_PATH || undefined
-		}
+		trace: 'retain-on-failure'
 	},
-	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+	projects: [
+		{
+			name: 'chromium',
+			use: {
+				...devices['Desktop Chrome'],
+				launchOptions: {
+					// The receiver popup has no user gesture of its own, so let it play media right away.
+					// CHROMIUM_ARGS adds more flags, e.g. to trust a proxy's CA certificate in CI.
+					args: [
+						'--autoplay-policy=no-user-gesture-required',
+						...(process.env.CHROMIUM_ARGS?.split(' ').filter(Boolean) ?? [])
+					],
+					// Use a Chromium that is already installed, instead of `playwright install chromium`.
+					executablePath: process.env.CHROMIUM_PATH || undefined
+				}
+			}
+		},
+		{
+			// The Cast SDK only supports Chrome, but with the emulator it also works in Firefox.
+			name: 'firefox',
+			use: {
+				...devices['Desktop Firefox'],
+				launchOptions: {
+					firefoxUserPrefs: {
+						// Like --autoplay-policy=no-user-gesture-required in Chromium.
+						'media.autoplay.default': 0,
+						'media.autoplay.blocking_policy': 0
+					}
+				}
+			}
+		}
+	],
 	webServer: {
 		command: `vite --port ${PORT} --strictPort`,
 		url: `http://localhost:${PORT}/sender/`,

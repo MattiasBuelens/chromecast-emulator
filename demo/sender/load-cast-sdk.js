@@ -21,10 +21,16 @@ const readStoredMode = () => {
 const requestedMode = new URLSearchParams(location.search).get('mode') || readStoredMode()
 const mode = requestedMode === 'pip' ? 'pip' : 'popup'
 
+// cast_sender.js only loads the actual Cast API in Chrome 89 or later (going by the user agent). In
+// other browsers, like Firefox, we load the Cast API of a recent Chrome ourselves.
+const CAST_API_URL = 'https://www.gstatic.com/eureka/clank/156/cast_sender.js'
+const isChrome89OrLater = () => Number(navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] ?? 0) >= 89
+
 // The emulator scripts must run before the Cast SDK, so it picks up the Presentation API polyfill.
 await loadScripts([
 	[presentationPolyfillUrl, { mode }],
 	[castSenderEmulatorUrl, { receiverUrl: RECEIVER_URL }],
+	...(isChrome89OrLater() ? [] : [CAST_API_URL]),
 	CAST_SENDER_SDK_URL
 ])
 
