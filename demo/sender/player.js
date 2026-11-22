@@ -99,7 +99,9 @@ export const setupPlayer = () => {
 	const updateCasting = () => {
 		const casting = video.remote.state === 'connected'
 		player.toggleAttribute('data-casting', casting)
-		const device = window.cast?.framework?.CastContext.getInstance().getCurrentSession()?.getCastDevice()
+		const device = window.cast?.framework?.CastContext.getInstance()
+			.getCurrentSession()
+			?.getCastDevice()
 		const name = player.querySelector('.device-name')
 		if (name && device) name.textContent = device.friendlyName
 	}

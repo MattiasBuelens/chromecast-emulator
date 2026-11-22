@@ -692,6 +692,8 @@ const device = {
 				this.sendToClient(client, 'leave_session', null, sequenceNumber)
 				// Like Chrome, disconnect every sender that would auto-join this one's session. All senders
 				// share the window that opened this receiver, so only their own policy matters.
+				// Copy the clients first, since closing a connection can remove its client.
+				// oxlint-disable-next-line unicorn/no-useless-spread
 				for (const other of [...this.clients.values()]) {
 					if (other.autoJoinPolicy !== 'page_scoped') other.connection.close()
 				}
