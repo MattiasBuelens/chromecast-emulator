@@ -14,6 +14,7 @@ const MEDIA_STORAGE_KEY = 'chromecast-emulator-demo:media'
 /**
  * @typedef {HTMLVideoElement & {
  *   castSrc: string | undefined
+ *   castContentType: string | undefined
  *   remote: RemotePlayback & { state: RemotePlaybackState }
  * }} CastableVideo
  */
@@ -81,6 +82,9 @@ export const setupPlayer = () => {
 		video.title = item.title
 		video.poster = item.poster
 		video.src = item.src
+		// Tell <castable-video> the content type, so it doesn't send a HEAD request to find out. That
+		// request waits until the local video stops downloading the same URL, delaying the cast.
+		video.castContentType = item.contentType
 		// While casting, a new cast-src loads it on the receiver.
 		video.castSrc = item.src
 		if (play && video.remote.state !== 'connected') {

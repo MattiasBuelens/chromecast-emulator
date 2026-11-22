@@ -433,3 +433,16 @@ test.describe('in a browser without Document Picture-in-Picture', () => {
 		await startCasting(sender)
 	})
 })
+
+test('casts without a HEAD request for the media', async ({ page: sender }) => {
+	// <castable-video> checks for HLS with a HEAD request unless it knows the content type. While the
+	// local video still downloads the same URL, Chrome holds that request back, delaying the cast.
+	/** @type {string[]} */
+	const heads = []
+	sender.on('request', (request) => {
+		if (request.method() === 'HEAD' && request.url() === MEDIA_URL) heads.push(request.url())
+	})
+	await startCasting(sender)
+	await expect.poll(async () => (await getSenderPlayer(sender)).contentId).toBe(MEDIA_URL)
+	expect(heads).toEqual([])
+})
