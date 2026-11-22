@@ -379,6 +379,31 @@ test.describe('PresentationConnection', () => {
 			])
 	})
 
+	// Not in WPT: the polyfill's debugging hook.
+	test('tells message observers about sent and received messages', async ({ controller }) => {
+		const receiver = await startPresentation(controller)
+		await getReceiverConnection(receiver)
+		await controller.evaluate(() => {
+			window.messages = []
+			window.presentationPolyfill!.addMessageObserver(({ direction, connection, data }) => {
+				if (connection !== window.connection) return
+				window.messages.push({ type: direction, data: typeof data === 'string' ? data : 'binary' })
+			})
+		})
+		await controller.evaluate(() => window.connection.send('ping'))
+		await receiver.evaluate(() => {
+			window.connection.send('pong')
+			window.connection.send(new Uint8Array([1, 2, 3]))
+		})
+		await expect
+			.poll(() => controller.evaluate(() => window.messages))
+			.toEqual([
+				{ type: 'send', data: 'ping' },
+				{ type: 'receive', data: 'pong' },
+				{ type: 'receive', data: 'binary' }
+			])
+	})
+
 	// PresentationConnection_send-manual.https.html
 	test('send() throws an InvalidStateError unless connected', async ({ controller }) => {
 		const [, errors] = await Promise.all([

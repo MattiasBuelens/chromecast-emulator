@@ -303,6 +303,52 @@ test('fills in media status fields the receiver leaves out', async ({ page: send
 	}
 })
 
+test('traces the messages between the sender SDK and the receiver', async ({ page: sender }) => {
+	await startCasting(sender)
+	// Collect the message events from here on.
+	const before = await sender.evaluate(() => {
+		const emulator = /** @type {NonNullable<typeof window.castSenderEmulator>} */ (
+			window.castSenderEmulator
+		)
+		/** @type {unknown[]} */
+		const events = []
+		Object.assign(window, { castMessageEvents: events })
+		emulator.addEventListener('message', (event) =>
+			events.push(/** @type {CustomEvent} */ (event).detail)
+		)
+		return emulator.trace.length
+	})
+	await sender.locator('#thumb0Div').click()
+	await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PLAYING')
+
+	const { trace, events } = await sender.evaluate(() => ({
+		trace: (window.castSenderEmulator?.trace || []).map(
+			({ direction, type, namespace, messageType }) => ({ direction, type, namespace, messageType })
+		),
+		events: /** @type {any} */ (window).castMessageEvents.length
+	}))
+	expect(trace).toContainEqual({
+		direction: 'receive',
+		type: 'new_session',
+		namespace: null,
+		messageType: null
+	})
+	expect(trace).toContainEqual({
+		direction: 'send',
+		type: 'v2_message',
+		namespace: 'urn:x-cast:com.google.cast.media',
+		messageType: 'LOAD'
+	})
+	expect(trace).toContainEqual({
+		direction: 'receive',
+		type: 'v2_message',
+		namespace: 'urn:x-cast:com.google.cast.media',
+		messageType: 'MEDIA_STATUS'
+	})
+	// Every message since we started listening was also fired as an event.
+	expect(events).toBe(trace.length - before)
+})
+
 test.describe('in a browser other than Chrome', () => {
 	// cast_sender.js only loads the Cast API when the user agent says Chrome.
 	test.use({

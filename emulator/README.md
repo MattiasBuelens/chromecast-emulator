@@ -142,6 +142,22 @@ In the receiver window, `castReceiverEmulator.trace` holds the latest IPC messag
 the emulated platform, and the messages to and from the sender. They are also logged with
 `console.debug()` (enable the "Verbose" log level in DevTools).
 
+In the sender page, `castSenderEmulator.trace` holds the latest messages between the Cast sender
+SDK and the receiver, in the format of Chrome's Media Router. Each entry has the `direction`
+(`send` or `receive`), the `sessionId`, the Media Router message `type` (like `v2_message`), and for
+Cast messages their `namespace` and `messageType` (like `LOAD` or `MEDIA_STATUS`), along with the
+parsed `message`. To show them as they happen, listen to `message` events:
+
+```js
+castSenderEmulator.addEventListener('message', (event) => {
+	const { direction, namespace, messageType, message } = event.detail
+	console.log(direction, namespace, messageType, message)
+})
+```
+
+Under the hood, `presentationPolyfill.addMessageObserver()` lets you see every message of every
+presentation connection in a page.
+
 ## End-to-end Tests
 
 The emulator works in browsers driven by test frameworks such as [Playwright](https://playwright.dev/):
