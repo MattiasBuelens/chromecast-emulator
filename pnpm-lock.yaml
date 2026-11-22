@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  castable-video@1.1.17:
+    hash: ffba7de2b66e23381ea1ee15d204109308e7c8dc6a5cc16e5f23f6070ce0784c
+    path: patches/castable-video@1.1.17.patch
+
 importers:
 
   .:
@@ -28,7 +33,7 @@ importers:
         version: link:../emulator
       castable-video:
         specifier: 1.1.17
-        version: 1.1.17
+        version: 1.1.17(patch_hash=ffba7de2b66e23381ea1ee15d204109308e7c8dc6a5cc16e5f23f6070ce0784c)
       media-chrome:
         specifier: 4.19.5
         version: 4.19.5(react@19.3.1)
@@ -1602,7 +1607,7 @@ snapshots:
 
   cac@7.0.0: {}
 
-  castable-video@1.1.17:
+  castable-video@1.1.17(patch_hash=ffba7de2b66e23381ea1ee15d204109308e7c8dc6a5cc16e5f23f6070ce0784c):
     dependencies:
       custom-media-element: 1.4.7
 
