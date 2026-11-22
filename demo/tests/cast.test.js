@@ -296,3 +296,16 @@ test('fills in media status fields the receiver leaves out', async ({ page: send
 		if (hasMedia) seen.add(mediaSessionId)
 	}
 })
+
+test.describe('in a browser other than Chrome', () => {
+	// cast_sender.js only loads the Cast API when the user agent says Chrome.
+	test.use({
+		userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0'
+	})
+
+	test('loads the Cast API and casts', async ({ page: sender }) => {
+		const receiver = await startCasting(sender)
+		expect(await sender.evaluate(() => typeof chrome.cast?.media)).toBe('object')
+		expect(receiver.isClosed()).toBe(false)
+	})
+})

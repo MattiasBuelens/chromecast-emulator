@@ -42,6 +42,39 @@ const LOG_PREFIX = '[cast-sender-emulator]'
 // The Cast SDK calls PresentationRequest#reconnect() with this ID to join an existing session.
 const AUTO_JOIN_ID = 'auto-join'
 
+// The Cast extension IDs that cast_sender.js tries when it doesn't recognize the browser as a recent
+// Chrome, e.g. in Firefox or Safari.
+const CAST_EXTENSION_IDS = ['pkedcjkdefgpdelpbcmbmeomcjbeemfm', 'enhhojjnijigcajfphajepfemndkmdlo']
+// The Cast API that cast_sender.js loads in Chrome.
+const CAST_API_URL = 'https://www.gstatic.com/eureka/clank/cast_sender.js'
+
+/**
+ * Let cast_sender.js load the Cast API in browsers other than Chrome.
+ *
+ * cast_sender.js is only a loader. In a recent Chrome (going by the user agent), it loads the actual
+ * Cast API from www.gstatic.com. In other browsers, it tries the Cast extension's script from a
+ * chrome-extension: URL instead, which fails, so `chrome.cast` stays undefined. We point those
+ * scripts at the Cast API that Chrome would get, which works with the polyfilled Presentation API.
+ */
+const loadCastApiInAnyBrowser = () => {
+	const srcProperty = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src')
+	if (!srcProperty?.set) return
+	const extensionUrls = new Set(
+		CAST_EXTENSION_IDS.map((id) => `chrome-extension://${id}/cast_sender.js`)
+	)
+	Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+		...srcProperty,
+		set(value: unknown) {
+			const url = String(value)
+			if (extensionUrls.has(url)) {
+				srcProperty.set!.call(this, CAST_API_URL)
+				return
+			}
+			srcProperty.set!.call(this, value)
+		}
+	})
+}
+
 const install = (presentationPolyfill: PresentationPolyfill) => {
 	// document.currentScript is only set while this script runs, so read it right away.
 	const script = document.currentScript as HTMLScriptElement | null
@@ -80,6 +113,8 @@ const install = (presentationPolyfill: PresentationPolyfill) => {
 
 	// cast_sender.js only uses the Presentation API when it detects Chrome.
 	window.chrome = window.chrome || {}
+
+	loadCastApiInAnyBrowser()
 
 	window.castSenderEmulator = { parseCastUrl, config }
 }

@@ -170,6 +170,12 @@ A real Chromecast applies its device volume to the audio output. The emulator ap
 receiver's `<audio>` and `<video>` elements instead, which overrides the receiver's own stream
 volume.
 
+### Other browsers
+
+The Cast Web Sender SDK only supports Chrome: in other browsers, `cast_sender.js` doesn't load the
+Cast API, and `chrome.cast` stays undefined. The sender emulator makes it load the same Cast API as
+in Chrome, so senders also work in browsers like Firefox.
+
 ### Known limitations
 
 - Only the sender page that opened the receiver window (and that page after a reload) can join
