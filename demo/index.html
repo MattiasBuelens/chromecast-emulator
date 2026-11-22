@@ -1,22 +1,174 @@
 <!doctype html>
-<html>
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<title>Chromecast Emulator Demo</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Chromecast Emulator</title>
+		<meta
+			name="description"
+			content="Cast from an unmodified Cast Web Sender app to an unmodified Cast receiver, right in your browser."
+		/>
+		<link rel="icon" href="./sender/icon.svg" type="image/svg+xml" />
+		<link rel="stylesheet" href="./sender/style.css" />
 	</head>
 	<body>
-		<h1>Chromecast Emulator Demo</h1>
-		<ul>
-			<li>
-				<a href="./sender/">Sender</a>: the
-				<a href="https://github.com/googlecast/CastVideos-chrome">CastVideos-chrome</a> sample app.
-				Click the cast button to open the receiver in a popup or Picture-in-Picture window.
-			</li>
-			<li>
-				<a href="./receiver/">Receiver</a>: a
-				<a href="https://developers.google.com/cast/docs/web_receiver/basic">basic Web Receiver</a>
-				app.
-			</li>
-		</ul>
+		<header class="site-header">
+			<a class="brand" href="./">
+				<img src="./sender/icon.svg" alt="" width="28" height="28" />
+				Chromecast Emulator
+			</a>
+			<fieldset class="mode-switch" id="receiver-mode">
+				<legend>Open the receiver in</legend>
+				<label><input type="radio" name="mode" value="popup" checked /> Popup</label>
+				<label><input type="radio" name="mode" value="pip" /> Picture-in-Picture</label>
+			</fieldset>
+			<nav class="links">
+				<a href="https://github.com/MattiasBuelens/chromecast-emulator">GitHub</a>
+				<a href="https://www.npmjs.com/package/@mattiasbuelens/chromecast-emulator">npm</a>
+			</nav>
+		</header>
+
+		<main>
+			<p class="intro">
+				This page uses the real, unmodified Cast SDK. Hit the cast button and the receiver opens in
+				a popup or Picture-in-Picture window, instead of on a Chromecast.
+				<a href="#how-it-works">How it works ↓</a>
+			</p>
+
+			<div class="layout">
+				<section class="player-column" aria-label="Player">
+					<media-controller id="player" class="player">
+						<castable-video
+							id="video"
+							slot="media"
+							crossorigin
+							playsinline
+							preload="metadata"
+						></castable-video>
+						<div class="casting-overlay" aria-live="polite">
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path
+									d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+								/>
+							</svg>
+							<span>Playing on <strong class="device-name">Chromecast Emulator</strong></span>
+						</div>
+						<media-loading-indicator slot="centered-chrome" noautohide></media-loading-indicator>
+						<media-control-bar>
+							<media-play-button></media-play-button>
+							<media-seek-backward-button seekoffset="10"></media-seek-backward-button>
+							<media-seek-forward-button seekoffset="10"></media-seek-forward-button>
+							<media-mute-button></media-mute-button>
+							<media-volume-range></media-volume-range>
+							<media-time-range></media-time-range>
+							<media-time-display showduration></media-time-display>
+							<media-cast-button></media-cast-button>
+							<media-fullscreen-button></media-fullscreen-button>
+						</media-control-bar>
+					</media-controller>
+					<div class="now-playing">
+						<h1 id="media-title">Pick a video</h1>
+						<p id="media-credit"></p>
+					</div>
+
+					<h2>Library</h2>
+					<ul class="library" id="library"></ul>
+				</section>
+
+				<aside class="session" aria-labelledby="session-heading">
+					<h2 id="session-heading">Cast session</h2>
+					<p class="session-state" id="session-state" data-state="loading">
+						<span class="dot" aria-hidden="true"></span>
+						<span id="session-state-text">Loading the Cast SDK…</span>
+					</p>
+					<dl class="session-details" id="session-details" hidden>
+						<dt>Receiver app</dt>
+						<dd id="session-app"></dd>
+						<dt>Session</dt>
+						<dd id="session-id"></dd>
+						<dt>Player state</dt>
+						<dd id="session-player-state"></dd>
+						<dt>Now playing</dt>
+						<dd id="session-media"></dd>
+					</dl>
+					<div class="session-actions" id="session-actions" hidden>
+						<button type="button" id="stop-casting">Stop casting</button>
+						<button type="button" id="leave-session">Leave</button>
+					</div>
+					<p class="hint" id="session-hint">
+						Click the cast button in the player to start casting.
+						<strong>Stop casting</strong> closes the receiver. <strong>Leave</strong> disconnects
+						this page but keeps the receiver playing; reload the page to rejoin it.
+					</p>
+				</aside>
+			</div>
+
+			<section class="messages" aria-labelledby="messages-heading">
+				<details id="messages-details" open>
+					<summary>
+						<h2 id="messages-heading">Messages</h2>
+						<span class="count" id="message-count">0</span>
+					</summary>
+					<p class="hint">
+						The messages between the Cast SDK in this page and the receiver, as the emulator sees
+						them. Click one to see all of it.
+					</p>
+					<div class="message-toolbar">
+						<fieldset class="filter" id="message-filter">
+							<legend>Show</legend>
+							<label><input type="radio" name="filter" value="all" checked /> All</label>
+							<label><input type="radio" name="filter" value="media" /> Media</label>
+							<label><input type="radio" name="filter" value="session" /> Session</label>
+							<label><input type="radio" name="filter" value="custom" /> Custom</label>
+						</fieldset>
+						<label class="toggle"><input type="checkbox" id="message-pause" /> Pause</label>
+						<button type="button" id="message-clear">Clear</button>
+					</div>
+					<ol class="message-list" id="message-list" aria-live="off"></ol>
+					<p class="empty" id="message-empty">No messages yet. Start casting to see some.</p>
+				</details>
+			</section>
+
+			<section class="how-it-works" id="how-it-works" aria-labelledby="how-heading">
+				<h2 id="how-heading">How this page works</h2>
+				<p>
+					In Chrome, the Cast SDK talks to Cast devices through the
+					<a href="https://w3c.github.io/presentation-api/">Presentation API</a>. The emulator
+					replaces that API, so casting opens your receiver page in a window instead. This page
+					loads three scripts, in this order, and nothing else is special about it:
+				</p>
+				<pre><code>&lt;script src="presentation-polyfill.js"&gt;&lt;/script&gt;
+&lt;script src="cast-sender-emulator.js" data-receiver-url="/receiver/"&gt;&lt;/script&gt;
+&lt;script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"&gt;&lt;/script&gt;</code></pre>
+				<p>
+					The player is <a href="https://www.media-chrome.org/">Media Chrome</a> with
+					<a href="https://github.com/muxinc/media-elements/tree/main/packages/castable-video"
+						><code>&lt;castable-video&gt;</code></a
+					>, which casts with the Cast SDK, just like on a real Chromecast. The
+					<a href="./receiver/">receiver</a> is the basic Cast receiver from Google's documentation,
+					with the emulator's receiver scripts loaded before the receiver SDK.
+				</p>
+				<p>
+					See the
+					<a href="https://github.com/MattiasBuelens/chromecast-emulator/tree/main/emulator#readme"
+						>emulator's README</a
+					>
+					to use it in your own app.
+				</p>
+			</section>
+		</main>
+
+		<footer class="site-footer">
+			<p>
+				Videos: <em>Big Buck Bunny</em>, <em>Elephants Dream</em>, <em>Sintel</em> and
+				<em>Tears of Steel</em> by the
+				<a href="https://www.blender.org/about/projects/">Blender Foundation</a>, licensed under
+				<a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution</a>
+				(<em>Elephants Dream</em> 2.5, the others 3.0), streamed from Google's Cast sample media.
+				Not affiliated with Google. Chromecast is a trademark of Google LLC.
+			</p>
+		</footer>
+
+		<script type="module" src="./sender/main.js"></script>
 	</body>
 </html>

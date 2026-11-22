@@ -1,10 +1,11 @@
-// Not part of CastVideos-chrome: loads the Chromecast emulator before the Cast sender SDK.
+// Loads the Chromecast emulator and the Cast sender SDK, then the player and the rest of the page.
 import { loadScripts } from '../src/load-scripts.js'
 import presentationPolyfillUrl from '@mattiasbuelens/chromecast-emulator/presentation-polyfill?url'
 import castSenderEmulatorUrl from '@mattiasbuelens/chromecast-emulator/cast-sender-emulator?url'
 
 // The receiver page that the emulator opens, for every receiver application ID.
-const RECEIVER_URL = '../receiver/'
+const RECEIVER_URL = './receiver/'
+// The same URL that <castable-video> loads, so it doesn't load the SDK a second time.
 const CAST_SENDER_SDK_URL =
 	'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1'
 
@@ -34,17 +35,16 @@ await loadScripts([
 	CAST_SENDER_SDK_URL
 ])
 
-const picker = /** @type {HTMLSelectElement} */ (document.querySelector('#receiver_mode select'))
-picker.value = mode
-if (!('documentPictureInPicture' in window)) {
-	const pipOption = /** @type {HTMLOptionElement} */ (picker.querySelector('option[value="pip"]'))
-	pipOption.disabled = true
-	pipOption.textContent += ' (not supported)'
-}
-// The next cast uses the new mode, without reloading the page.
-picker.addEventListener('change', () => {
-	presentationPolyfill.mode = /** @type {'popup' | 'pip'} */ (picker.value)
-	try {
-		localStorage.setItem(MODE_STORAGE_KEY, picker.value)
-	} catch {}
-})
+// The player and the page, now that the Cast SDK is on its way.
+await Promise.all([
+	import('media-chrome'),
+	import('castable-video'),
+	import('./receiver-mode.js').then(({ setupReceiverMode }) =>
+		setupReceiverMode(mode, MODE_STORAGE_KEY)
+	),
+	import('./message-log.js').then(({ setupMessageLog }) => setupMessageLog())
+])
+const { setupPlayer } = await import('./player.js')
+setupPlayer()
+const { setupSessionPanel } = await import('./session-panel.js')
+setupSessionPanel()

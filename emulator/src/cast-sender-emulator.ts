@@ -17,6 +17,10 @@
  * `data-receiver-url` is the receiver page for every app ID. To pick a page per app ID, set
  * `window.castEmulatorConfig = { receivers: { '<appId>': '<url>' }, receiverUrl: '<fallback>' }`
  * before loading this script.
+ *
+ * For debugging, `castSenderEmulator.trace` holds the most recent messages between the sender SDK
+ * and the receiver, and `castSenderEmulator` fires a `message` event (a CustomEvent whose `detail`
+ * is a {@link CastMessage}) for each one.
  */
 import type { PresentationPolyfill } from './presentation-polyfill'
 import { parseCastUrl, SESSION_ID_PREFIX } from './shared/cast-url'
@@ -28,10 +32,37 @@ export interface CastEmulatorConfig {
 	receivers: Record<string, string>
 }
 
+/** A message between the sender SDK and the receiver, in the format of Chrome's Media Router. */
+export interface CastMessage {
+	/** When the SDK sent or received the message, as from `Date.now()`. */
+	time: number
+	/** `send`: from the sender SDK to the receiver; `receive`: from the receiver to the SDK. */
+	direction: 'send' | 'receive'
+	/** The Cast session, which is also the presentation ID. */
+	sessionId: string
+	/** The Media Router message type, e.g. `v2_message`, `app_message` or `new_session`. */
+	type: string | null
+	/**
+	 * For `v2_message` and `app_message`: the Cast namespace, e.g. `urn:x-cast:com.google.cast.media`.
+	 */
+	namespace: string | null
+	/** The type of the Cast message inside, e.g. `LOAD` or `MEDIA_STATUS`, if it has one. */
+	messageType: string | null
+	/** The message, parsed as JSON, or as it was sent if it isn't JSON. */
+	message: unknown
+}
+
+export interface CastSenderEmulator extends EventTarget {
+	parseCastUrl: typeof parseCastUrl
+	config: CastEmulatorConfig
+	/** The most recent messages between the sender SDK and the receiver, oldest first. */
+	trace: CastMessage[]
+}
+
 declare global {
 	interface Window {
 		castEmulatorConfig?: Partial<CastEmulatorConfig>
-		castSenderEmulator?: { parseCastUrl: typeof parseCastUrl; config: CastEmulatorConfig }
+		castSenderEmulator?: CastSenderEmulator
 		/** cast_sender.js only uses the Presentation API when it detects Chrome. */
 		chrome?: object
 	}
@@ -41,6 +72,45 @@ const LOG_PREFIX = '[cast-sender-emulator]'
 
 // The Cast SDK calls PresentationRequest#reconnect() with this ID to join an existing session.
 const AUTO_JOIN_ID = 'auto-join'
+
+const TRACE_LIMIT = 500
+const MEDIA_NAMESPACE = 'urn:x-cast:com.google.cast.media'
+const RECEIVER_NAMESPACE = 'urn:x-cast:com.google.cast.receiver'
+// v2_message carries media messages, plus a few receiver ones (sent by the SDK as v2 too).
+const RECEIVER_MESSAGE_TYPES = new Set(['SET_VOLUME', 'STOP', 'RECEIVER_STATUS'])
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null
+
+const stringOrNull = (value: unknown) => (typeof value === 'string' ? value : null)
+
+/** Describe a message between the sender SDK and the receiver. */
+const describeMessage = (
+	direction: CastMessage['direction'],
+	sessionId: string,
+	data: unknown
+): CastMessage => {
+	let message: unknown = data
+	if (typeof data === 'string') {
+		try {
+			message = JSON.parse(data)
+		} catch {}
+	}
+	const type = isObject(message) ? stringOrNull(message.type) : null
+	const body = isObject(message) ? message.message : undefined
+	let namespace: string | null = null
+	let messageType: string | null = null
+	if (type === 'v2_message' && isObject(body)) {
+		messageType = stringOrNull(body.type)
+		namespace =
+			messageType && RECEIVER_MESSAGE_TYPES.has(messageType) ? RECEIVER_NAMESPACE : MEDIA_NAMESPACE
+	} else if (type === 'app_message' && isObject(body)) {
+		namespace = stringOrNull(body.namespaceName)
+		const appMessage = isObject(body.message) ? body.message : null
+		messageType = appMessage ? stringOrNull(appMessage.type) : null
+	}
+	return { time: Date.now(), direction, sessionId, type, namespace, messageType, message }
+}
 
 const install = (presentationPolyfill: PresentationPolyfill) => {
 	// document.currentScript is only set while this script runs, so read it right away.
@@ -78,10 +148,24 @@ const install = (presentationPolyfill: PresentationPolyfill) => {
 		return session?.id || null
 	})
 
+	const emulator = Object.assign(new EventTarget(), {
+		parseCastUrl,
+		config,
+		trace: [] as CastMessage[]
+	})
+
+	presentationPolyfill.addMessageObserver(({ direction, connection, data }) => {
+		if (!connection.id.startsWith(SESSION_ID_PREFIX)) return
+		const message = describeMessage(direction, connection.id, data)
+		emulator.trace.push(message)
+		if (emulator.trace.length > TRACE_LIMIT) emulator.trace.shift()
+		emulator.dispatchEvent(new CustomEvent('message', { detail: message }))
+	})
+
 	// cast_sender.js only uses the Presentation API when it detects Chrome.
 	window.chrome = window.chrome || {}
 
-	window.castSenderEmulator = { parseCastUrl, config }
+	window.castSenderEmulator = emulator
 }
 
 if (window.presentationPolyfill) {

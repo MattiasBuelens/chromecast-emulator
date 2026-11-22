@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises'
 // The sender loads its media and images from here. The tests serve their own media instead, so
 // they don't depend on (or download) real content.
 const MEDIA_SOURCE_ROOT = 'https://storage.googleapis.com/cpe-sample-media/content/'
-// The first video in the sender's carousel.
+// The first video in the sender's library, which the player starts with.
 const MEDIA_URL = `${MEDIA_SOURCE_ROOT}big_buck_bunny/prog/big_buck_bunny_prog.mp4`
 const MEDIA_FILE = new URL('./fixtures/test-video.webm', import.meta.url)
 
@@ -40,17 +40,26 @@ const getSenderPlayer = (sender) =>
 test.beforeEach(async ({ context }) => {
 	const body = await readFile(MEDIA_FILE)
 	// context.route() also covers the receiver popup.
-	await context.route(`${MEDIA_SOURCE_ROOT}**`, (route) =>
-		route.request().url() === MEDIA_URL
-			? route.fulfill({
-					body,
-					// The sender says "video/mp4", but browsers sniff the actual format.
-					contentType: 'video/webm',
-					headers: { 'Access-Control-Allow-Origin': '*' }
-				})
-			: // Thumbnails
-				route.fulfill({ status: 404 })
-	)
+	await context.route(`${MEDIA_SOURCE_ROOT}**`, (route) => {
+		// Thumbnails
+		if (route.request().url() !== MEDIA_URL) return route.fulfill({ status: 404 })
+		const headers = {
+			'Access-Control-Allow-Origin': '*',
+			'Accept-Ranges': 'bytes',
+			// The sender says "video/mp4", but browsers sniff the actual format.
+			'Content-Type': 'video/webm'
+		}
+		// Serve byte ranges, so the player can seek, like with the real media.
+		const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers()['range'] || '')
+		if (!range) return route.fulfill({ body, headers })
+		const start = Number(range[1])
+		const end = range[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1
+		return route.fulfill({
+			status: 206,
+			body: body.subarray(start, end + 1),
+			headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${body.length}` }
+		})
+	})
 })
 
 /**
@@ -65,14 +74,14 @@ test.beforeEach(async ({ context }) => {
  * @returns {Promise<{ receiver: Frame, receiverWindow: Page }>}
  */
 const castFromSender = async (sender, mode) => {
-	await sender.goto(`/sender/?mode=${mode}`)
+	await sender.goto(`/?mode=${mode}`)
 	// Wait for the Cast SDK to find the (emulated) receiver, before clicking the cast button.
 	await sender.waitForFunction(
 		() => window.cast?.framework?.CastContext.getInstance().getCastState() === 'NOT_CONNECTED'
 	)
 	const [receiverWindow] = await Promise.all([
 		sender.waitForEvent('popup'),
-		sender.locator('#castbutton').click()
+		sender.locator('media-cast-button').click()
 	])
 	/** @type {Frame | undefined} */
 	let receiver
@@ -107,8 +116,9 @@ for (const mode of /** @type {const} */ (['popup', 'pip'])) {
 				)
 				.toBe('SESSION_STARTED')
 
-			// Pick the first video from the carousel. The sender loads it on the receiver.
-			await sender.locator('#thumb0Div').click()
+			// The player loads its video on the receiver, paused like it was locally. Play it.
+			await expect(sender.locator('#session-media')).toHaveText('Big Buck Bunny')
+			await sender.locator('media-play-button').click()
 
 			// The receiver plays it...
 			await expect
@@ -121,21 +131,40 @@ for (const mode of /** @type {const} */ (['popup', 'pip'])) {
 			await expect
 				.poll(() => getSenderPlayer(sender))
 				.toEqual({ sessionState: 'SESSION_STARTED', contentId: MEDIA_URL, playerState: 'PLAYING' })
-			await expect(sender.locator('#playerstate')).toHaveText(/Big Buck Bunny/)
+			await expect(sender.locator('#session-player-state')).toHaveText('PLAYING')
+			await expect(sender.locator('#player')).toHaveAttribute('data-casting')
 
-			// Pause from the sender's media controls.
-			await sender.locator('#pause').click()
+			// Pause from the player's controls.
+			await sender.locator('media-play-button').click()
 			await expect.poll(async () => (await getReceiverVideo(receiver))?.paused).toBe(true)
 			await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PAUSED')
+			await expect(sender.locator('#session-player-state')).toHaveText('PAUSED')
+			const receiverTime = /** @type {number} */ ((await getReceiverVideo(receiver))?.currentTime)
 
 			// Stop casting: the receiver closes its window.
-			await sender.evaluate(() => cast.framework.CastContext.getInstance().endCurrentSession(true))
+			await sender.getByRole('button', { name: 'Stop casting', exact: true }).first().click()
 			await expect.poll(() => receiverWindow.isClosed()).toBe(true)
 			await expect
 				.poll(() =>
 					sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState())
 				)
 				.toBe('SESSION_ENDED')
+			// The player continues locally, from where the receiver was.
+			await expect(sender.locator('#player')).not.toHaveAttribute('data-casting')
+			const getLocalVideo = () =>
+				sender.evaluate(() => {
+					const video = /** @type {HTMLVideoElement} */ (document.getElementById('video'))
+					return {
+						src: video.currentSrc,
+						currentTime: video.currentTime,
+						paused: video.paused,
+						readyState: video.readyState
+					}
+				})
+			expect((await getLocalVideo()).src).toBe(MEDIA_URL)
+			await expect
+				.poll(async () => (await getLocalVideo()).currentTime)
+				.toBeGreaterThan(receiverTime - 1)
 		})
 
 		test('stops casting from the cast button', async ({ page: sender }) => {
@@ -150,14 +179,14 @@ for (const mode of /** @type {const} */ (['popup', 'pip'])) {
 			// While casting, the cast button shows the running session instead of starting another one.
 			let popups = 0
 			sender.on('popup', () => popups++)
-			await sender.locator('#castbutton').click()
+			await sender.locator('media-cast-button').click()
 			const dialog = sender.getByRole('dialog', { name: 'Presenting' })
 			await expect(dialog).toBeVisible()
 
 			// Clicking outside the dialog closes it.
 			await sender.mouse.click(5, 5)
 			await expect(dialog).toBeHidden()
-			await sender.locator('#castbutton').click()
+			await sender.locator('media-cast-button').click()
 			await expect(dialog).toBeVisible()
 
 			// Closing the dialog keeps casting.
@@ -169,7 +198,7 @@ for (const mode of /** @type {const} */ (['popup', 'pip'])) {
 			).toBe('SESSION_STARTED')
 
 			// Stop casting: the receiver closes its window.
-			await sender.locator('#castbutton').click()
+			await sender.locator('media-cast-button').click()
 			await dialog.getByRole('button', { name: 'Stop' }).click()
 			await expect(dialog).toBeHidden()
 			await expect.poll(() => receiverWindow.isClosed()).toBe(true)
@@ -247,6 +276,26 @@ test('asks the receiver for its media status after a launch, like Chrome', async
 	expect(newSession).toMatchObject({ appType: 'WEB', universalAppId: newSession?.appId })
 })
 
+test('rejoins the session after leaving and reloading', async ({ page: sender }) => {
+	const receiver = await startCasting(sender)
+	await sender.getByRole('button', { name: 'Leave' }).click()
+	await expect
+		.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+		.toBe('SESSION_ENDED')
+	await expect(sender.locator('#session-actions')).toBeHidden()
+
+	// Like with a real Chromecast, the reloaded page joins the running session.
+	await sender.reload()
+	await expect
+		.poll(() =>
+			sender.evaluate(() => window.cast?.framework?.CastContext.getInstance().getSessionState())
+		)
+		.toBe('SESSION_RESUMED')
+	await expect(sender.locator('#session-state')).toHaveText(/Connected to/)
+	await expect(sender.locator('#player')).toHaveAttribute('data-casting')
+	expect(receiver.isClosed()).toBe(false)
+})
+
 test('leaves the session without stopping the receiver', async ({ page: sender }) => {
 	const receiver = await startCasting(sender)
 
@@ -268,7 +317,7 @@ test('leaves the session without stopping the receiver', async ({ page: sender }
 
 test('fills in media status fields the receiver leaves out', async ({ page: sender }) => {
 	const receiver = await startCasting(sender)
-	await sender.locator('#thumb0Div').click()
+	await sender.locator('media-play-button').click()
 	await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PLAYING')
 
 	// The media statuses the receiver sent, and the ones the emulator passed on to the sender SDK.
@@ -301,6 +350,52 @@ test('fills in media status fields the receiver leaves out', async ({ page: send
 		if (seen.has(mediaSessionId)) expect(hasMedia).toBe(true)
 		if (hasMedia) seen.add(mediaSessionId)
 	}
+})
+
+test('traces the messages between the sender SDK and the receiver', async ({ page: sender }) => {
+	await startCasting(sender)
+	// Collect the message events from here on.
+	const before = await sender.evaluate(() => {
+		const emulator = /** @type {NonNullable<typeof window.castSenderEmulator>} */ (
+			window.castSenderEmulator
+		)
+		/** @type {unknown[]} */
+		const events = []
+		Object.assign(window, { castMessageEvents: events })
+		emulator.addEventListener('message', (event) =>
+			events.push(/** @type {CustomEvent} */ (event).detail)
+		)
+		return emulator.trace.length
+	})
+	await sender.locator('media-play-button').click()
+	await expect.poll(async () => (await getSenderPlayer(sender)).playerState).toBe('PLAYING')
+
+	const { trace, events } = await sender.evaluate(() => ({
+		trace: (window.castSenderEmulator?.trace || []).map(
+			({ direction, type, namespace, messageType }) => ({ direction, type, namespace, messageType })
+		),
+		events: /** @type {any} */ (window).castMessageEvents.length
+	}))
+	expect(trace).toContainEqual({
+		direction: 'receive',
+		type: 'new_session',
+		namespace: null,
+		messageType: null
+	})
+	expect(trace).toContainEqual({
+		direction: 'send',
+		type: 'v2_message',
+		namespace: 'urn:x-cast:com.google.cast.media',
+		messageType: 'LOAD'
+	})
+	expect(trace).toContainEqual({
+		direction: 'receive',
+		type: 'v2_message',
+		namespace: 'urn:x-cast:com.google.cast.media',
+		messageType: 'MEDIA_STATUS'
+	})
+	// Every message since we started listening was also fired as an event.
+	expect(events).toBe(trace.length - before)
 })
 
 test.describe('in a browser other than Chrome', () => {

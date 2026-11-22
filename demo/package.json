@@ -10,7 +10,9 @@
 		"test": "pnpm --filter @mattiasbuelens/chromecast-emulator build && playwright test"
 	},
 	"dependencies": {
-		"@mattiasbuelens/chromecast-emulator": "workspace:*"
+		"@mattiasbuelens/chromecast-emulator": "workspace:*",
+		"castable-video": "1.1.17",
+		"media-chrome": "4.19.5"
 	},
 	"devDependencies": {
 		"@playwright/test": "1.63.0",

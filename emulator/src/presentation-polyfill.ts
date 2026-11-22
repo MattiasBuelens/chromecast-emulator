@@ -65,10 +65,23 @@ export interface PresentationPolyfill {
 			known: KnownPresentation[]
 		) => string | null
 	): void
+	/**
+	 * Register a function that sees every message that a connection in this page sends or
+	 * receives, for debugging. It runs when `send()` is called, and right before a `message` event.
+	 */
+	addMessageObserver(observer: (message: ObservedMessage) => void): void
 	/** Whether this page was opened as a presentation, by a page that also uses the polyfill. */
 	isReceivingWindow: boolean
 	/** The browser's own `navigator.presentation`, if any. */
 	nativePresentation: Presentation | undefined
+}
+
+export interface ObservedMessage {
+	/** Whether the connection sent or received the message. */
+	direction: 'send' | 'receive'
+	connection: globalThis.PresentationConnection
+	/** A string, or an ArrayBuffer or Blob for binary messages. */
+	data: string | ArrayBuffer | Blob
 }
 
 export interface PresentationConnectionPolyfillInfo {
@@ -163,6 +176,17 @@ type ReconnectResolver = Parameters<PresentationPolyfill['addReconnectResolver']
 const urlResolvers: UrlResolver[] = []
 const idGenerators: IdGenerator[] = []
 const reconnectResolvers: ReconnectResolver[] = []
+const messageObservers: Array<(message: ObservedMessage) => void> = []
+
+const observeMessage = (message: ObservedMessage) => {
+	for (const observer of messageObservers) {
+		try {
+			observer(message)
+		} catch (error) {
+			console.error(LOG_PREFIX, 'message observer failed', error)
+		}
+	}
+}
 
 /** Pick the ID for a new presentation of the given presentation URL. */
 const createPresentationId = (presentationUrl: string): string => {
@@ -255,7 +279,9 @@ class PresentationConnection extends EventTarget implements globalThis.Presentat
 		if (this.state !== 'connected') {
 			throw domException('InvalidStateError', `Connection is ${this.state}`)
 		}
-		this[transportKey].send(toTransferable(data))
+		const transferable = toTransferable(data)
+		observeMessage({ direction: 'send', connection: this, data: transferable })
+		this[transportKey].send(transferable)
 	}
 
 	close() {
@@ -306,6 +332,7 @@ const _received = (connection: PresentationConnection, data: MessageData) => {
 		// Binary messages arrive as the connection's binaryType, whatever the other side sent.
 		if (binaryType === 'blob' && data instanceof ArrayBuffer) data = new Blob([data])
 		if (binaryType === 'arraybuffer' && data instanceof Blob) data = await data.arrayBuffer()
+		observeMessage({ direction: 'receive', connection, data })
 		connection.dispatchEvent(new MessageEvent('message', { data }))
 	})
 	receiveQueues.set(
@@ -972,6 +999,9 @@ const install = () => {
 		},
 		addReconnectResolver(resolver) {
 			reconnectResolvers.push(resolver)
+		},
+		addMessageObserver(observer) {
+			messageObservers.push(observer)
 		},
 		isReceivingWindow,
 		nativePresentation: NativePresentation
