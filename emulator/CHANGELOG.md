@@ -1,5 +1,11 @@
 # @mattiasbuelens/chromecast-emulator
 
+## 0.3.0
+
+### Minor Changes
+
+- Add `castSenderEmulator.trace` and `message` events, to inspect the messages between the sender SDK and the receiver, and `presentationPolyfill.addMessageObserver()`. ([#21](https://github.com/MattiasBuelens/chromecast-emulator/pull/21))
+
 ## 0.2.0
 
 ### Minor Changes
