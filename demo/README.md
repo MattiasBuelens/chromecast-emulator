@@ -52,17 +52,19 @@ SDK. See the [emulator's README](../emulator/README.md) for how the emulator wor
 [Playwright](https://playwright.dev/): it opens the sender, clicks the cast button, picks up the
 receiver popup with `page.waitForEvent('popup')`, plays a video and pauses it from the sender, and
 checks the result on both sides (the receiver's `<video>`, and the sender SDK's media session).
-Every test runs twice: with the receiver in a popup, and in a Picture-in-Picture window.
+The cast tests run twice: with the receiver in a popup, and in a Picture-in-Picture window. All
+tests run in Chromium and in Firefox (except Picture-in-Picture, which Firefox doesn't support).
 Both pages use the real Cast SDKs, so the test needs access to `www.gstatic.com`. The video comes
 from [`tests/fixtures`](./tests/fixtures), served with `context.route()` in place of the sample
 media.
 
 ```bash
-pnpm --filter chromecast-emulator-demo exec playwright install chromium  # once
+pnpm --filter chromecast-emulator-demo exec playwright install chromium firefox  # once, unless you set CHROMIUM_PATH
 pnpm --filter chromecast-emulator-demo test
 ```
 
 Playwright starts the dev server on port 4173 and launches Chromium with
 `--autoplay-policy=no-user-gesture-required`, so the receiver plays without a click. Set
 `CHROMIUM_PATH` to use a Chromium that is already installed, and `CHROMIUM_ARGS` to pass extra
-command line flags.
+command line flags. In Firefox, it sets the preferences that allow autoplay instead. Pass
+`--project chromium` or `--project firefox` to run the tests in one browser.

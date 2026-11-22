@@ -91,6 +91,12 @@ const castFromSender = async (sender, mode) => {
 
 for (const mode of /** @type {const} */ (['popup', 'pip'])) {
 	test.describe(`${mode} mode`, () => {
+		// Only Chromium has Document Picture-in-Picture.
+		test.skip(
+			({ browserName }) => mode === 'pip' && browserName !== 'chromium',
+			'Document Picture-in-Picture is not supported'
+		)
+
 		test('casts and controls media from the sender to the receiver', async ({ page: sender }) => {
 			// Cast: the emulator opens the receiver page.
 			const { receiver, receiverWindow } = await castFromSender(sender, mode)
