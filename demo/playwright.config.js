@@ -48,7 +48,7 @@ export default defineConfig({
 	],
 	webServer: {
 		command: `vite --port ${PORT} --strictPort`,
-		url: `http://localhost:${PORT}/sender/`,
+		url: `http://localhost:${PORT}/`,
 		reuseExistingServer: !process.env.CI
 	}
 })

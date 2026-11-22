@@ -9,9 +9,10 @@ This repository is a [pnpm workspace](https://pnpm.io/workspaces) with two packa
   [`@mattiasbuelens/chromecast-emulator`](https://www.npmjs.com/package/@mattiasbuelens/chromecast-emulator).
   A Presentation API polyfill and the sender and receiver emulator scripts. See its
   [README](./emulator/README.md) for how it works and how to use it with your own apps.
-- [`demo`](./demo): a Vite app with a sender (Google's
-  [CastVideos-chrome](https://github.com/googlecast/CastVideos-chrome) sample) and a basic receiver
-  that use the emulator, and a Playwright end-to-end test. See its [README](./demo/README.md).
+- [`demo`](./demo): a Vite app with a sender (a [Media Chrome](https://www.media-chrome.org/)
+  player that casts with the Cast SDK) and a basic receiver that use the emulator, and Playwright
+  end-to-end tests. See its [README](./demo/README.md), or try it at
+  <https://mattiasbuelens.github.io/chromecast-emulator/>.
 
 ## Prerequisites
 
@@ -21,8 +22,8 @@ This repository is a [pnpm workspace](https://pnpm.io/workspaces) with two packa
 ## Scripts
 
 - `pnpm dev`: runs every package's dev script in parallel. tsdown rebuilds the emulator on every
-  change, and Vite serves the demo and reloads the page when the emulator is rebuilt. Open
-  `/sender/` and click the cast button.
+  change, and Vite serves the demo and reloads the page when the emulator is rebuilt. Open the
+  demo and click the cast button in the player.
 - `pnpm build`: builds the emulator (into `emulator/dist`) and the demo (into `demo/dist`).
 - `pnpm test`: runs every package's tests: the emulator's Presentation API polyfill tests, adapted
   from [web-platform-tests](https://github.com/web-platform-tests/wpt/tree/master/presentation-api),
@@ -50,8 +51,9 @@ Releases are managed with [Changesets](https://changesets.dev/).
   [Simplifying Chromecast emulation for developers](https://www.redspace.com/blog/simplifying-chromecast-emulation-for-developers),
   whose emulator inspired this one.
 - The [Presentation API](https://www.w3.org/TR/presentation-api/), which makes this possible.
+- Google's [CastVideos-chrome](https://github.com/googlecast/CastVideos-chrome) sample, which the
+  demo sender was based on until it was rewritten.
 
 ## License
 
-[MIT](./LICENSE), except for the demo sender in [`demo/sender`](./demo/sender), which is based on
-Google's CastVideos-chrome sample and licensed under the [Apache License 2.0](./demo/sender/LICENSE).
+[MIT](./LICENSE)

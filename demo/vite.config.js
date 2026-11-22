@@ -6,6 +6,7 @@ export default defineConfig({
 		rollupOptions: {
 			input: {
 				index: resolve(import.meta.dirname, 'index.html'),
+				// The old URL of the sender, which redirects to the home page.
 				sender: resolve(import.meta.dirname, 'sender/index.html'),
 				receiver: resolve(import.meta.dirname, 'receiver/index.html')
 			}

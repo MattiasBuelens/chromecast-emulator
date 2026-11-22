@@ -26,7 +26,7 @@ server, or load them from a CDN such as
 `https://cdn.jsdelivr.net/npm/@mattiasbuelens/chromecast-emulator/dist/presentation-polyfill.js`.
 With a bundler like Vite, you can also get their URLs by importing them, for example
 `import polyfillUrl from '@mattiasbuelens/chromecast-emulator/presentation-polyfill?url'`
-(see the [demo](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/demo/sender/index.html)).
+(see the [demo](https://github.com/MattiasBuelens/chromecast-emulator/blob/main/demo/sender/main.js)).
 
 ### Exports
 

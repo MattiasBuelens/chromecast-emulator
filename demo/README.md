@@ -11,26 +11,40 @@ From the repository root:
 pnpm dev
 ```
 
-1. Open the sender at `http://localhost:5173/sender/`.
-1. Click the cast button. The receiver opens in a popup window. Allow pop-ups for localhost if
-   Chrome blocks it. To open it in a Picture-in-Picture window instead, pick that in the
-   "Open receiver in" menu at the top right, or open the sender with `?mode=pip`.
-1. Pick a video. It plays in the receiver window, and the sender's controls control it.
+1. Open the sender at `http://localhost:5173/`.
+1. Click the cast button in the player. The receiver opens in a popup window. Allow pop-ups for
+   localhost if Chrome blocks it. To open it in a Picture-in-Picture window instead, pick that in the
+   "Open the receiver in" switch at the top, or open the sender with `?mode=pip`.
+1. The video plays on the receiver, and the player's controls control it. Pick another video from
+   the library to play that one instead. Click **Stop casting** to continue locally, or **Leave**
+   to keep the receiver playing and rejoin it after a reload.
 1. If a "Click to allow media playback" bar shows up in the receiver window, click it once (see
    [Troubleshooting](../emulator/README.md#troubleshooting)).
 
 ## Sender
 
-[`sender`](./sender) is Google's [CastVideos-chrome](https://github.com/googlecast/CastVideos-chrome)
-sample app (at commit `e97c410`), licensed under the [Apache License 2.0](./sender/LICENSE). Changes:
+The sender is the demo's home page, [`index.html`](./index.html), with its scripts and styles in
+[`sender`](./sender):
 
-- [`index.html`](./sender/index.html) loads [`load-cast-sdk.js`](./sender/load-cast-sdk.js) instead
-  of the Cast sender SDK. That script loads the emulator scripts, and then the SDK.
-- [`CastVideos.js`](./sender/CastVideos.js) resolves its image URLs with `import.meta.url`, so Vite
-  includes those images in the build.
+- [`main.js`](./sender/main.js) loads the emulator scripts and the Cast sender SDK, then the rest.
+- [`player.js`](./sender/player.js): a [Media Chrome](https://www.media-chrome.org/) player around
+  a [`<castable-video>`](https://github.com/muxinc/media-elements/tree/main/packages/castable-video),
+  which casts with the unmodified Cast SDK. When casting starts, it loads the current video on the
+  receiver at the same position, and when casting stops, it continues locally.
+  [`catalog.js`](./sender/catalog.js) lists the videos in the library.
+- [`session-panel.js`](./sender/session-panel.js): the "Cast session" panel, with what the Cast
+  SDK knows about the session.
+- [`message-log.js`](./sender/message-log.js): the "Messages" section, with the messages between
+  the Cast SDK and the receiver, from the emulator's `castSenderEmulator.trace` and `message`
+  events.
+- [`receiver-mode.js`](./sender/receiver-mode.js): the switch between a popup and a
+  Picture-in-Picture receiver window.
 
-The sender uses CastVideos' own receiver application ID. The emulator opens the local receiver for
-any application ID.
+`<castable-video>` uses the Default Media Receiver's application ID. The emulator opens the local
+receiver for any application ID. The old `/sender/` URL redirects to the home page.
+
+The videos are Blender Foundation open movies from Google's Cast sample media, licensed under
+Creative Commons Attribution.
 
 ## Receiver
 
@@ -52,11 +66,12 @@ SDK. See the [emulator's README](../emulator/README.md) for how the emulator wor
 [Playwright](https://playwright.dev/): it opens the sender, clicks the cast button, picks up the
 receiver popup with `page.waitForEvent('popup')`, plays a video and pauses it from the sender, and
 checks the result on both sides (the receiver's `<video>`, and the sender SDK's media session).
-The cast tests run twice: with the receiver in a popup, and in a Picture-in-Picture window. All
-tests run in Chromium and in Firefox (except Picture-in-Picture, which Firefox doesn't support).
+Other tests cover stopping, leaving and rejoining a session, and the message trace.
+The cast and stop tests run twice: with the receiver in a popup, and in a Picture-in-Picture window.
+All tests run in Chromium and in Firefox (except Picture-in-Picture, which Firefox doesn't support).
 Both pages use the real Cast SDKs, so the test needs access to `www.gstatic.com`. The video comes
-from [`tests/fixtures`](./tests/fixtures), served with `context.route()` in place of the sample
-media.
+from [`tests/fixtures`](./tests/fixtures), served with `context.route()` (with byte ranges, so the
+player can seek) in place of the sample media.
 
 ```bash
 pnpm --filter chromecast-emulator-demo exec playwright install chromium firefox  # once, unless you set CHROMIUM_PATH

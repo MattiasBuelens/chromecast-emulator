@@ -1,108 +1,15 @@
-<!--
-// Copyright 2021 Google LLC. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Modified for the Chromecast emulator demo: loads the Cast sender SDK
-// through load-cast-sdk.js, after the emulator scripts, and adds a picker
-// for where the emulator opens the receiver.
--->
-
-<!DOCTYPE html>
-<html>
-
-<head>
-  <title>Cast Videos: Google Cast Chrome Sender SDK Demo App</title>
-  <link rel="icon" type="image/x-icon" href="imagefiles/favicon.ico" />
-  <link rel="icon" type="image/png" href="imagefiles/favicon-16x16.png" />
-  <link rel="icon" type="image/png" href="imagefiles/favicon-32x32.png" />
-  <link rel="icon" type="image/png" href="imagefiles/favicon-64x64.png" />
-  <link rel="stylesheet" type="text/css" href="css/CastVideos.css">
-  <link href='//fonts.googleapis.com/css?family=Roboto&subset=latin,cyrillic-ext,greek-ext,latin-ext' rel='stylesheet'
-    type='text/css'>
-</head>
-
-<body>
-  <div id="top_header">
-    <div id="logo"></div>
-    <!-- Not part of CastVideos-chrome: where the emulator opens the receiver. -->
-    <label id="receiver_mode" style="float: right; margin: 24px 16px; color: #fff; font-size: 14px">
-      Open receiver in
-      <select>
-        <option value="popup">a popup window</option>
-        <option value="pip">a Picture-in-Picture window</option>
-      </select>
-    </label>
-  </div>
-  <div id="main_video">
-    <div class="imageSub">
-      <!-- Put Your Image Width -->
-      <div class="blackbg" id="playerstatebg">IDLE</div>
-      <div class=label id="playerstate">IDLE</div>
-      <img src="imagefiles/bunny.jpg" id="video_image">
-      <div id="video_image_overlay"></div>
-      <video id="video_element">
-      </video>
-    </div>
-
-    <div id="skip">Skip Ad</div>
-
-    <div id="media_control">
-      <div id="play"></div>
-      <div id="pause"></div>
-      <div id="audio_bg"></div>
-      <div id="audio_bg_track"></div>
-      <div id="audio_indicator"></div>
-      <div id="audio_bg_level"></div>
-      <div id="audio_on"></div>
-      <div id="audio_off"></div>
-      <div id="progress_bar_container">
-        <div id="progress_bg"></div>
-        <div id="seekable_window"></div>
-        <div id="progress"></div>
-        <div id="unseekable_overlay"></div>
-        <div id="progress_indicator"></div>
-      </div>
-      <div id="fullscreen_expand"></div>
-      <div id="fullscreen_collapse"></div>
-      <google-cast-launcher id="castbutton"></google-cast-launcher>
-      <div id="currentTime">00:00:00</div>
-      <div id="duration">00:00:00</div>
-      <img id="live_indicator">
-    </div>
-  </div>
-  <div id="media_info">
-    <div id="media_title"></div>
-    <div id="feature_toggle_container">
-      <input type="radio" id="none" name="feature" value="none" checked>None<br>
-      <input type="radio" id="ads" name="feature" value="ads">Ads<br>
-      <input type="radio" id="live" name="feature" value="live">Live
-    </div>
-    <div id="media_subtitle"></div>
-  </div>
-
-  <div id="carousel"></div>
-
-  <div id="footer">
-    <div id="copyright">Copyright 2021 Google LLC. All Rights reserved.</div>
-    <div id="footer_content">Visit the <a id="footer_content_link" href="https://developers.google.com/cast/">Google
-        Cast Developer Site</a></div>
-    <div id="footer_language">Language English</div>
-  </div>
-
-  <script src="CastVideos.js" type="module"></script>
-  <!-- Load the Chromecast emulator, then the Cast sender SDK. -->
-  <script src="load-cast-sdk.js" type="module"></script>
-</body>
-
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Chromecast Emulator</title>
+		<!-- The sender moved to the demo's root. -->
+		<script>
+			location.replace('../' + location.search + location.hash)
+		</script>
+		<meta http-equiv="refresh" content="0; url=../" />
+	</head>
+	<body>
+		<p>The demo moved to <a href="../">the home page</a>.</p>
+	</body>
 </html>
