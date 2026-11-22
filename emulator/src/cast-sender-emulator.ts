@@ -42,43 +42,6 @@ const LOG_PREFIX = '[cast-sender-emulator]'
 // The Cast SDK calls PresentationRequest#reconnect() with this ID to join an existing session.
 const AUTO_JOIN_ID = 'auto-join'
 
-// The Cast extension IDs that cast_sender.js tries, in this order, when it doesn't recognize the
-// browser as a recent Chrome, e.g. in Firefox or Safari.
-const CAST_EXTENSION_IDS = ['pkedcjkdefgpdelpbcmbmeomcjbeemfm', 'enhhojjnijigcajfphajepfemndkmdlo']
-// The Chrome version whose Cast API we load in other browsers. In Chrome, cast_sender.js loads the
-// Cast API for its own version from www.gstatic.com/eureka/clank/<version>/cast_sender.js. (The
-// unversioned www.gstatic.com/eureka/clank/cast_sender.js is an old version that doesn't notice when
-// a session ends.)
-const CAST_API_CHROME_VERSION = 156
-const castApiUrl = (chromeVersion: number) =>
-	`https://www.gstatic.com/eureka/clank/${chromeVersion}/cast_sender.js`
-
-/**
- * Let cast_sender.js load the Cast API in browsers other than Chrome.
- *
- * cast_sender.js is only a loader. In a recent Chrome (going by the user agent), it loads the actual
- * Cast API for that Chrome version from www.gstatic.com, and falls back to the previous version. In
- * other browsers, it tries the Cast extension's scripts from chrome-extension: URLs instead, which
- * fail, so `chrome.cast` stays undefined. We point those at the Cast API of a recent Chrome version
- * and the one before it, which work with the polyfilled Presentation API.
- */
-const loadCastApiInAnyBrowser = () => {
-	const srcProperty = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src')
-	if (!srcProperty?.set) return
-	const replacements = new Map(
-		CAST_EXTENSION_IDS.map((id, index) => [
-			`chrome-extension://${id}/cast_sender.js`,
-			castApiUrl(CAST_API_CHROME_VERSION - index)
-		])
-	)
-	Object.defineProperty(HTMLScriptElement.prototype, 'src', {
-		...srcProperty,
-		set(value: unknown) {
-			srcProperty.set!.call(this, replacements.get(String(value)) ?? value)
-		}
-	})
-}
-
 const install = (presentationPolyfill: PresentationPolyfill) => {
 	// document.currentScript is only set while this script runs, so read it right away.
 	const script = document.currentScript as HTMLScriptElement | null
@@ -117,8 +80,6 @@ const install = (presentationPolyfill: PresentationPolyfill) => {
 
 	// cast_sender.js only uses the Presentation API when it detects Chrome.
 	window.chrome = window.chrome || {}
-
-	loadCastApiInAnyBrowser()
 
 	window.castSenderEmulator = { parseCastUrl, config }
 }

@@ -172,9 +172,17 @@ volume.
 
 ### Other browsers
 
-The Cast Web Sender SDK only supports Chrome: in other browsers, `cast_sender.js` doesn't load the
-Cast API, and `chrome.cast` stays undefined. The sender emulator makes it load the same Cast API as
-in Chrome, so senders also work in browsers like Firefox.
+The Cast Web Sender SDK only supports Chrome: `cast_sender.js` is a loader that only loads the
+actual Cast API when the user agent says Chrome 89 or later. In other browsers, like Firefox,
+`chrome.cast` stays undefined. To use the emulator there, load the Cast API of a recent Chrome
+yourself, after the emulator scripts and before `cast_sender.js`:
+
+```html
+<script src="https://www.gstatic.com/eureka/clank/156/cast_sender.js"></script>
+```
+
+Use a versioned URL like the one above: the unversioned `eureka/clank/cast_sender.js` is an old
+Cast API that never notices when a session ends.
 
 ### Known limitations
 
