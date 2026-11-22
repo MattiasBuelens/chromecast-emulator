@@ -33,11 +33,42 @@ jobs:
         with:
           path: demo/dist/
 
-  test-e2e:
-    timeout-minutes: 60
+  playwright-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: demo/package.json
+          sparse-checkout-cone-mode: false
+      # Run the tests in the Playwright image of the version we use, which has its browsers and their
+      # dependencies, rather than installing them on every run. The emulator and the demo must pin
+      # the same version.
+      - name: Read the Playwright version
+        id: version
+        run: |
+          version="$(jq -r '.devDependencies["@playwright/test"] // empty' demo/package.json)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::@playwright/test must be pinned to an exact version in demo/package.json, not '$version'."
+            exit 1
+          fi
+          echo "Playwright $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  test-e2e:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    needs: playwright-version
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
+      # Firefox doesn't run as root.
+      options: --user 1001
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -45,8 +76,6 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install Playwright browsers
-        run: pnpm --filter chromecast-emulator-demo exec playwright install --with-deps chromium
       - name: Run tests
         run: pnpm test
       - uses: actions/upload-artifact@v7
