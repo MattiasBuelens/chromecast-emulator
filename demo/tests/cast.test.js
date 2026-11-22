@@ -309,9 +309,15 @@ test.describe('in a browser other than Chrome', () => {
 		userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0'
 	})
 
-	test('loads the Cast API and casts', async ({ page: sender }) => {
+	test('loads the Cast API, casts and stops casting', async ({ page: sender }) => {
 		const receiver = await startCasting(sender)
 		expect(await sender.evaluate(() => typeof chrome.cast?.media)).toBe('object')
-		expect(receiver.isClosed()).toBe(false)
+
+		// The Cast API notices when the session ends. (An old version of it doesn't.)
+		await sender.evaluate(() => cast.framework.CastContext.getInstance().endCurrentSession(true))
+		await expect.poll(() => receiver.isClosed()).toBe(true)
+		await expect
+			.poll(() => sender.evaluate(() => cast.framework.CastContext.getInstance().getSessionState()))
+			.toBe('SESSION_ENDED')
 	})
 })

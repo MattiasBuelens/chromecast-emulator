@@ -42,35 +42,39 @@ const LOG_PREFIX = '[cast-sender-emulator]'
 // The Cast SDK calls PresentationRequest#reconnect() with this ID to join an existing session.
 const AUTO_JOIN_ID = 'auto-join'
 
-// The Cast extension IDs that cast_sender.js tries when it doesn't recognize the browser as a recent
-// Chrome, e.g. in Firefox or Safari.
+// The Cast extension IDs that cast_sender.js tries, in this order, when it doesn't recognize the
+// browser as a recent Chrome, e.g. in Firefox or Safari.
 const CAST_EXTENSION_IDS = ['pkedcjkdefgpdelpbcmbmeomcjbeemfm', 'enhhojjnijigcajfphajepfemndkmdlo']
-// The Cast API that cast_sender.js loads in Chrome.
-const CAST_API_URL = 'https://www.gstatic.com/eureka/clank/cast_sender.js'
+// The Chrome version whose Cast API we load in other browsers. In Chrome, cast_sender.js loads the
+// Cast API for its own version from www.gstatic.com/eureka/clank/<version>/cast_sender.js. (The
+// unversioned www.gstatic.com/eureka/clank/cast_sender.js is an old version that doesn't notice when
+// a session ends.)
+const CAST_API_CHROME_VERSION = 156
+const castApiUrl = (chromeVersion: number) =>
+	`https://www.gstatic.com/eureka/clank/${chromeVersion}/cast_sender.js`
 
 /**
  * Let cast_sender.js load the Cast API in browsers other than Chrome.
  *
  * cast_sender.js is only a loader. In a recent Chrome (going by the user agent), it loads the actual
- * Cast API from www.gstatic.com. In other browsers, it tries the Cast extension's script from a
- * chrome-extension: URL instead, which fails, so `chrome.cast` stays undefined. We point those
- * scripts at the Cast API that Chrome would get, which works with the polyfilled Presentation API.
+ * Cast API for that Chrome version from www.gstatic.com, and falls back to the previous version. In
+ * other browsers, it tries the Cast extension's scripts from chrome-extension: URLs instead, which
+ * fail, so `chrome.cast` stays undefined. We point those at the Cast API of a recent Chrome version
+ * and the one before it, which work with the polyfilled Presentation API.
  */
 const loadCastApiInAnyBrowser = () => {
 	const srcProperty = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src')
 	if (!srcProperty?.set) return
-	const extensionUrls = new Set(
-		CAST_EXTENSION_IDS.map((id) => `chrome-extension://${id}/cast_sender.js`)
+	const replacements = new Map(
+		CAST_EXTENSION_IDS.map((id, index) => [
+			`chrome-extension://${id}/cast_sender.js`,
+			castApiUrl(CAST_API_CHROME_VERSION - index)
+		])
 	)
 	Object.defineProperty(HTMLScriptElement.prototype, 'src', {
 		...srcProperty,
 		set(value: unknown) {
-			const url = String(value)
-			if (extensionUrls.has(url)) {
-				srcProperty.set!.call(this, CAST_API_URL)
-				return
-			}
-			srcProperty.set!.call(this, value)
+			srcProperty.set!.call(this, replacements.get(String(value)) ?? value)
 		}
 	})
 }
