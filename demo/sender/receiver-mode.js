@@ -12,9 +12,9 @@ export const setupReceiverMode = (mode, storageKey) => {
 	for (const input of inputs) {
 		input.checked = input.value === mode
 		if (input.value === 'pip' && !('documentPictureInPicture' in window)) {
+			const label = /** @type {HTMLElement} */ (input.parentElement)
+			label.title = 'This browser does not support Document Picture-in-Picture'
 			input.disabled = true
-			/** @type {HTMLElement} */ (input.parentElement).title =
-				'This browser does not support Document Picture-in-Picture'
 		}
 	}
 	// The next cast uses the new mode, without reloading the page.
